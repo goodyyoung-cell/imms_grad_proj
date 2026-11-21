@@ -10,8 +10,9 @@
 
 1. `supabase/migrations/` 의 SQL을 파일 이름 순서대로 적용한다.
    - 대시보드 SQL Editor에 붙여 넣거나, Supabase CLI로 `supabase db push`
-2. Project Settings → API Keys에서 `service_role`(secret) 키를 `.env`의 `SUPABASE_SERVICE_ROLE_KEY`에 넣는다.
-   - service role 키는 RLS를 우회한다. 서버에서만 쓰고 절대 커밋하지 않는다.
+2. Project Settings → API Keys의 **Secret keys** 칸에서 `sb_secret_...` 키를 복사해 `.env`의 `SUPABASE_SECRET_KEY`에 넣는다.
+   - 새 프로젝트에는 예전 `service_role` 키가 없다. 비밀 키가 그 역할을 대신한다.
+   - 비밀 키는 RLS를 우회한다. 서버에서만 쓰고 절대 커밋하지 않는다.
 3. 팀원은 조직 멤버로 초대한다 (Organization Settings → Team → Invite).
 
 모든 테이블은 RLS가 켜져 있고 정책이 없다. 공개 키(anon)로는 아무것도 읽을 수 없다.
@@ -39,11 +40,11 @@ gcloud services enable run.googleapis.com cloudbuild.googleapis.com artifactregi
 
 # 비밀값을 Secret Manager에 넣기 (값마다 반복)
 printf '%s' "<값>" | gcloud secrets create anthropic-api-key --data-file=-
-# gemini-api-key, supabase-url, supabase-service-role-key, dart-api-key, job-token 도 같은 방식
+# gemini-api-key, supabase-url, supabase-secret-key, dart-api-key, job-token 도 같은 방식
 
 # Cloud Run 서비스 계정이 비밀값을 읽을 수 있게 (기본 컴퓨트 서비스 계정 기준)
 PROJECT_NUMBER=$(gcloud projects describe <PROJECT_ID> --format='value(projectNumber)')
-for s in anthropic-api-key gemini-api-key supabase-url supabase-service-role-key dart-api-key job-token; do
+for s in anthropic-api-key gemini-api-key supabase-url supabase-secret-key dart-api-key job-token; do
   gcloud secrets add-iam-policy-binding $s \
     --member="serviceAccount:${PROJECT_NUMBER}-compute@developer.gserviceaccount.com" \
     --role=roles/secretmanager.secretAccessor
@@ -56,7 +57,7 @@ done
 gcloud run deploy sdr-agent --source . --region asia-northeast3 \
   --allow-unauthenticated --timeout 3600 --memory 1Gi \
   --set-env-vars DEFAULT_LLM=claude,ANTHROPIC_MODEL=claude-sonnet-5-5,GEMINI_MODEL=<모델명> \
-  --set-secrets ANTHROPIC_API_KEY=anthropic-api-key:latest,GEMINI_API_KEY=gemini-api-key:latest,SUPABASE_URL=supabase-url:latest,SUPABASE_SERVICE_ROLE_KEY=supabase-service-role-key:latest,DART_API_KEY=dart-api-key:latest,JOB_TOKEN=job-token:latest
+  --set-secrets ANTHROPIC_API_KEY=anthropic-api-key:latest,GEMINI_API_KEY=gemini-api-key:latest,SUPABASE_URL=supabase-url:latest,SUPABASE_SECRET_KEY=supabase-secret-key:latest,DART_API_KEY=dart-api-key:latest,JOB_TOKEN=job-token:latest
 ```
 
 - `--allow-unauthenticated`: 승인 버튼 웹훅이 외부에서 들어와야 해서 공개로 둔다. 대신 `/jobs/*`는 `JOB_TOKEN`으로 막는다.

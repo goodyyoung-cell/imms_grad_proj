@@ -1,4 +1,4 @@
-"""Supabase 접근. service role 키로 서버에서만 쓴다 (모든 테이블이 RLS로 잠겨 있음)."""
+"""Supabase 접근. 비밀 키(sb_secret_...)로 서버에서만 쓴다 (모든 테이블이 RLS로 잠겨 있음)."""
 
 from __future__ import annotations
 
@@ -9,11 +9,11 @@ from .config import Settings, load_settings
 
 def get_client(settings: Settings | None = None):
     s = settings or load_settings()
-    if not s.supabase_url or not s.supabase_service_role_key:
-        raise RuntimeError("SUPABASE_URL과 SUPABASE_SERVICE_ROLE_KEY가 필요합니다")
+    if not s.supabase_url or not s.supabase_secret_key:
+        raise RuntimeError("SUPABASE_URL과 SUPABASE_SECRET_KEY가 필요합니다")
     from supabase import create_client
 
-    return create_client(s.supabase_url, s.supabase_service_role_key)
+    return create_client(s.supabase_url, s.supabase_secret_key)
 
 
 class Repo:

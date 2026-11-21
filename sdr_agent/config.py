@@ -23,7 +23,7 @@ class Settings:
     gemini_model: str | None
     default_llm: str
     supabase_url: str | None
-    supabase_service_role_key: str | None
+    supabase_secret_key: str | None
     dart_api_key: str | None
     job_token: str | None
     agent_max_steps: int
@@ -37,7 +37,7 @@ def load_settings() -> Settings:
         gemini_model=_get("GEMINI_MODEL"),
         default_llm=_get("DEFAULT_LLM", "claude"),
         supabase_url=_get("SUPABASE_URL"),
-        supabase_service_role_key=_get("SUPABASE_SERVICE_ROLE_KEY"),
+        supabase_secret_key=_get("SUPABASE_SECRET_KEY"),
         dart_api_key=_get("DART_API_KEY"),
         job_token=_get("JOB_TOKEN"),
         agent_max_steps=int(_get("AGENT_MAX_STEPS", "8")),
