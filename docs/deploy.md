@@ -2,12 +2,17 @@
 
 ## 1. Supabase
 
-1. 졸업프로젝트용 조직에 프로젝트를 만든다 (리전: Seoul `ap-northeast-2`).
-2. `supabase/migrations/` 의 SQL을 순서대로 적용한다.
+**현재 상태 (2026-11-21)**: 조직 `IMMS Graduation Project`에 프로젝트 `sdr-agent`를 만들었고(서울 `ap-northeast-2`), `supabase/migrations/`의 두 파일을 적용했다. 수신 거부·미승인 발송 트리거도 실제 DB에서 확인했다.
+
+- `SUPABASE_URL`: `https://huldtztohuzrkfgguyxv.supabase.co`
+
+새로 세팅하거나 마이그레이션을 추가할 때:
+
+1. `supabase/migrations/` 의 SQL을 파일 이름 순서대로 적용한다.
    - 대시보드 SQL Editor에 붙여 넣거나, Supabase CLI로 `supabase db push`
-3. Project Settings → API에서 `SUPABASE_URL`과 `service_role` 키를 `.env`에 넣는다.
+2. Project Settings → API Keys에서 `service_role`(secret) 키를 `.env`의 `SUPABASE_SERVICE_ROLE_KEY`에 넣는다.
    - service role 키는 RLS를 우회한다. 서버에서만 쓰고 절대 커밋하지 않는다.
-4. 팀원은 조직 멤버로 초대한다.
+3. 팀원은 조직 멤버로 초대한다 (Organization Settings → Team → Invite).
 
 모든 테이블은 RLS가 켜져 있고 정책이 없다. 공개 키(anon)로는 아무것도 읽을 수 없다.
 
