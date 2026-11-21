@@ -74,7 +74,7 @@ AI가 초기 영업 단계(Top of Funnel)의 반복적인 접촉·응대·선별
 
 - 언어: Python
 - LLM: Claude와 Gemini. 공통 어댑터로 감싸 바꿔 끼울 수 있게 한다 (기본: 에이전트 루프는 Claude, 대량 요약·비교 실험은 Gemini)
-- 실행 환경: 로컬 우선. Google Cloud Run(웹훅용 서비스 + 예약 실행용 작업, Cloud Scheduler) 배포는 루프가 안정되면 하는 선택 사항
+- 실행 환경: Google Cloud Run (웹훅용 서비스 + 예약 실행, Cloud Scheduler). 필수. 개발은 로컬에서 하고, 뼈대부터 배포해 두고 기능을 얹는다
 - DB: Supabase (Postgres) — 리드 상태, 실행 로그, 승인 기록
 - 벡터 DB / RAG: Supabase pgvector 우선 검토 (미정)
 - 승인 채널: Slack 또는 이메일 (미정)
