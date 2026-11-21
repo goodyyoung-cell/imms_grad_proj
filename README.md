@@ -22,6 +22,7 @@ SaaS·AI 솔루션 시장이 대기업에서 중소기업으로 넓어지고 있
 
 - [프로젝트 계획서 요약](docs/project-plan.md)
 - [주요 결정 기록](docs/decisions.md)
+- [이번 학기 구현 범위](docs/scope.md)
 - [Claude 작업 맥락 (CLAUDE.md)](CLAUDE.md)
 
 ## 팀
@@ -31,7 +32,7 @@ SaaS·AI 솔루션 시장이 대기업에서 중소기업으로 넓어지고 있
 
 ## 시작하기
 
-기술 스택이 정해지면 설치·실행 방법을 추가합니다.
+Python 기반으로 개발합니다. 코드 뼈대를 만들 때 설치·실행 방법을 추가합니다.
 
 ```bash
 cp .env.example .env   # 값을 채워 넣기. .env는 커밋되지 않습니다
