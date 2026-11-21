@@ -91,12 +91,34 @@ AI가 초기 영업 단계(Top of Funnel)의 반복적인 접촉·응대·선별
 │   ├── project-plan.md  # 가을학기 제출 프로젝트 계획서 요약
 │   ├── decisions.md     # 주요 결정 기록 (무엇을, 왜)
 │   ├── scope.md         # 이번 학기 구현 범위 (P0/P1/축소)
+│   ├── deploy.md        # Supabase·Cloud Run 배포 방법
 │   └── meetings/        # 회의 메모
+├── sdr_agent/
+│   ├── llm/             # Claude·Gemini 어댑터. 공통 타입은 base.py
+│   ├── agent/           # 에이전트 루프, 도구 레지스트리, 실행 로그
+│   ├── toolkit/         # 에이전트가 쓰는 도구 (DART, 웹 페이지, 리서치 도구 묶음)
+│   ├── workflows/       # 모듈별 워크플로우 (research.py = 모듈 1)
+│   ├── scoring.py       # 규칙 기반 리드 점수
+│   ├── db.py            # Supabase 접근
+│   ├── jobs.py          # 예약·이벤트 실행 단위 (app과 cli가 공유)
+│   ├── app.py           # Cloud Run 웹 서버 (/jobs/*, /webhooks/*)
+│   └── cli.py           # 로컬 실행
+├── supabase/migrations/ # DB 스키마 (SQL)
+├── tests/               # API 키 없이 도는 테스트 (가짜 LLM 사용)
+├── Dockerfile           # Cloud Run 이미지
+├── pyproject.toml
 ├── .env.example         # 필요한 환경변수 목록 (값은 비워둠)
 └── .gitignore
 ```
 
-코드 디렉터리는 뼈대를 만들 때 추가한다.
+## 코드 규칙
+
+- 새 모듈은 `workflows/`에 워크플로우를, `toolkit/`에 도구를 추가한다. 에이전트 루프(`agent/loop.py`)는 공통으로 쓴다.
+- 도구는 실패하면 예외 대신 `{"error": ...}`를 돌려줘도 된다. 루프가 오류를 LLM에게 전달해 다른 방법을 찾게 한다.
+- 고객에게 나가는 행동(발송)은 도구로 만들지 않는다. 사람 승인 뒤에 워크플로우가 직접 실행한다.
+- 출처 없는 사실은 저장하지 않는다. 리서치 결과는 이번 실행에서 도구가 돌려준 URL만 출처로 인정한다.
+- 테스트는 가짜 LLM(`tests/test_research_agent.py`의 `ScriptedLLM`)으로 API 키 없이 돌아가게 쓴다.
+- 수신 거부 중단과 미승인 발송 차단은 DB 트리거로도 막혀 있다 (`supabase/migrations/`).
 
 ## 협업 규칙
 
