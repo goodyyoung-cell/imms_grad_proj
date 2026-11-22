@@ -27,10 +27,12 @@ def research_leads(
     s = settings or load_settings()
     client = get_client(s)
     repo = Repo(client)
+    ids = lead_ids or repo.list_lead_ids("new", limit)
+    if not ids:
+        return []  # 처리할 리드가 없으면 LLM 키 없이도 정상 종료 (첫 배포 점검용)
     llm = get_llm(provider, s)
     dart = DartClient(s.dart_api_key) if s.dart_api_key else None
 
-    ids = lead_ids or repo.list_lead_ids("new", limit)
     out: list[dict[str, Any]] = []
     for lead_id in ids:
         repo.set_status(lead_id, "researching")

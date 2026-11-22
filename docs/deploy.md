@@ -31,6 +31,51 @@ uvicorn sdr_agent.app:app --reload                      # 웹 서버 (http://loc
 
 ## 3. Cloud Run
 
+### 첫 배포 (LLM 키 없이 DB 연결까지만 확인)
+
+LLM·DART 키가 아직 없어도 배포할 수 있다. 처리할 리드가 없으면 `/jobs/research`가 LLM 없이 `{"processed": 0}`을 돌려주므로, Cloud Run → Supabase 연결과 토큰 인증을 확인할 수 있다. 저장소 폴더에서 실행한다.
+
+```bash
+gcloud auth login
+gcloud config set project <PROJECT_ID>
+gcloud config set run/region asia-northeast3
+gcloud services enable run.googleapis.com cloudbuild.googleapis.com artifactregistry.googleapis.com \
+  secretmanager.googleapis.com cloudscheduler.googleapis.com
+
+# JOB_TOKEN을 만들어 .env에 기록 (키를 화면에 치지 않도록 .env에서 읽어 쓴다)
+sed -i '' "s/^JOB_TOKEN=.*/JOB_TOKEN=$(openssl rand -hex 32)/" .env
+set -a; source .env; set +a
+
+printf '%s' "$SUPABASE_URL"        | gcloud secrets create supabase-url --data-file=-
+printf '%s' "$SUPABASE_SECRET_KEY" | gcloud secrets create supabase-secret-key --data-file=-
+printf '%s' "$JOB_TOKEN"           | gcloud secrets create job-token --data-file=-
+
+PROJECT_NUMBER=$(gcloud projects describe "$(gcloud config get-value project)" --format='value(projectNumber)')
+for s in supabase-url supabase-secret-key job-token; do
+  gcloud secrets add-iam-policy-binding $s \
+    --member="serviceAccount:${PROJECT_NUMBER}-compute@developer.gserviceaccount.com" \
+    --role=roles/secretmanager.secretAccessor
+done
+
+gcloud run deploy sdr-agent --source . --allow-unauthenticated --timeout 3600 --memory 1Gi \
+  --set-secrets SUPABASE_URL=supabase-url:latest,SUPABASE_SECRET_KEY=supabase-secret-key:latest,JOB_TOKEN=job-token:latest
+
+URL=$(gcloud run services describe sdr-agent --format='value(status.url)')
+curl "$URL/healthz"                                   # {"ok":true}
+curl -X POST "$URL/jobs/research" -H "Authorization: Bearer $JOB_TOKEN" \
+  -H "Content-Type: application/json" -d '{"trigger":"manual"}'   # {"processed":0,"results":[]}
+```
+
+LLM·DART 키가 생기면 같은 방식으로 비밀값을 만들고 권한을 준 뒤 서비스에 추가한다:
+
+```bash
+gcloud run services update sdr-agent \
+  --update-secrets ANTHROPIC_API_KEY=anthropic-api-key:latest,DART_API_KEY=dart-api-key:latest \
+  --update-env-vars DEFAULT_LLM=claude,ANTHROPIC_MODEL=claude-sonnet-5-5
+```
+
+### 전체 구성 (모든 키가 준비된 뒤)
+
 처음 한 번 (GCP 프로젝트, 결제 계정 연결 후):
 
 ```bash
