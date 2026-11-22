@@ -31,6 +31,8 @@ uvicorn sdr_agent.app:app --reload                      # 웹 서버 (http://loc
 
 ## 3. Cloud Run
 
+**현재 상태 (2026-11-22)**: GCP 프로젝트 `gen-lang-client-0136144273`, 리전 `asia-northeast3`(서울), 결제 계정 연결 완료. 팀원은 IAM에서 이 프로젝트에 초대받아 쓴다.
+
 ### 첫 배포 (LLM 키 없이 DB 연결까지만 확인)
 
 LLM·DART 키가 아직 없어도 배포할 수 있다. 처리할 리드가 없으면 `/jobs/research`가 LLM 없이 `{"processed": 0}`을 돌려주므로, Cloud Run → Supabase 연결과 토큰 인증을 확인할 수 있다. 저장소 폴더에서 실행한다.
