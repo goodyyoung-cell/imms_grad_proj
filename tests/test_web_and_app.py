@@ -18,6 +18,6 @@ def test_jobs_require_token(monkeypatch):
     from sdr_agent.app import app
 
     client = TestClient(app)
-    assert client.get("/healthz").json() == {"ok": True}
+    assert client.get("/health").json() == {"ok": True}
     assert client.post("/jobs/research", json={}).status_code == 401
     assert client.post("/jobs/research", json={}, headers={"Authorization": "Bearer wrong"}).status_code == 401

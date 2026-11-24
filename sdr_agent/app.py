@@ -31,8 +31,8 @@ def require_job_token(authorization: str | None = Header(default=None)) -> None:
         raise HTTPException(401, "인증 실패")
 
 
-@app.get("/healthz")
-def healthz() -> dict:
+@app.get("/health")
+def health() -> dict:
     return {"ok": True}
 
 

@@ -26,7 +26,7 @@ cp .env.example .env      # 값 채우기
 pytest                    # API 키 없이 도는 테스트
 
 python -m sdr_agent.cli research --limit 3              # 상태가 new인 리드 3건 조사
-uvicorn sdr_agent.app:app --reload                      # 웹 서버 (http://localhost:8000/healthz)
+uvicorn sdr_agent.app:app --reload                      # 웹 서버 (http://localhost:8000/health)
 ```
 
 ## 3. Cloud Run
@@ -63,10 +63,12 @@ gcloud run deploy sdr-agent --source . --allow-unauthenticated --timeout 3600 --
   --set-secrets SUPABASE_URL=supabase-url:latest,SUPABASE_SECRET_KEY=supabase-secret-key:latest,JOB_TOKEN=job-token:latest
 
 URL=$(gcloud run services describe sdr-agent --format='value(status.url)')
-curl "$URL/healthz"                                   # {"ok":true}
+curl "$URL/health"                                   # {"ok":true}  (/healthz처럼 z로 끝나는 경로는 Cloud Run이 예약해 쓸 수 없다)
 curl -X POST "$URL/jobs/research" -H "Authorization: Bearer $JOB_TOKEN" \
   -H "Content-Type: application/json" -d '{"trigger":"manual"}'   # {"processed":0,"results":[]}
 ```
+
+`/jobs/research`가 `인증 실패`를 돌려주면 터미널을 새로 열어 `$JOB_TOKEN`이 비어 있는 경우가 많다. 저장소 폴더에서 `set -a; source .env; set +a`를 다시 실행한다.
 
 LLM·DART 키가 생기면 같은 방식으로 비밀값을 만들고 권한을 준 뒤 서비스에 추가한다:
 
@@ -114,7 +116,7 @@ gcloud run deploy sdr-agent --source . --region asia-northeast3 \
 
 ```bash
 URL=$(gcloud run services describe sdr-agent --region asia-northeast3 --format='value(status.url)')
-curl $URL/healthz
+curl $URL/health
 curl -X POST $URL/jobs/research -H "Authorization: Bearer <JOB_TOKEN>" \
   -H "Content-Type: application/json" -d '{"limit": 1, "trigger": "manual"}'
 ```
