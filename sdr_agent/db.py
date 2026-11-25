@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
 from typing import Any
 
@@ -49,6 +50,29 @@ class Repo:
         rows = (self.c.table("leads").select("*").ilike("email", email.strip()).is_("merged_into", "null")
                 .order("inbound_at").limit(1).execute().data)
         return rows[0] if rows else None
+
+    def find_candidates(self, email: str | None, domain: str | None, company_name: str) -> list[dict]:
+        """중복일 수 있는 기존 리드. 최종 판정은 intake.find_match가 정규화해서 한다."""
+        cols = "id,email,company_name,company_domain,source,merged_into,unsubscribed_at,status"
+        found: dict[str, dict] = {}
+
+        def add(rows):
+            for r in rows:
+                found[r["id"]] = r
+
+        t = self.c.table("leads")
+        if email:
+            add(t.select(cols).ilike("email", email).limit(50).execute().data)
+        if domain:
+            add(t.select(cols).ilike("company_domain", domain).limit(50).execute().data)
+        core = re.sub(r"\(주\)|㈜|주식회사", "", company_name).strip()
+        if core:
+            add(t.select(cols).ilike("company_name", f"%{core}%").limit(50).execute().data)
+        # 병합된 리드가 걸리면 대표 리드도 함께 가져온다
+        roots = {r["merged_into"] for r in found.values() if r.get("merged_into")} - set(found)
+        if roots:
+            add(t.select(cols).in_("id", list(roots)).execute().data)
+        return list(found.values())
 
     def unsubscribe(self, lead_id: str) -> None:
         # DB 트리거가 상태를 unsubscribed로 바꾸고 보내지 않은 메시지를 모두 취소한다

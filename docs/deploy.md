@@ -26,6 +26,9 @@ cp .env.example .env      # 값 채우기
 pytest                    # API 키 없이 도는 테스트
 
 python -m sdr_agent.cli seed                            # 가상 리드 12건을 DB에 넣기 (한 번만)
+python -m sdr_agent.cli import-leads --file data/sample/leads_template.csv            # 시트 업로드 미리보기
+python -m sdr_agent.cli import-leads --file 리드.xlsx --commit                        # 실제 저장
+python -m sdr_agent.cli import-leads --google-sheet "https://docs.google.com/..."    # 구글 시트
 python -m sdr_agent.cli research --limit 3              # 상태가 new인 리드 3건 조사
 python -m sdr_agent.cli draft --limit 3                 # 조사 끝난 리드에 첫 메일 초안 (승인 대기)
 python -m sdr_agent.cli pending                         # 승인 대기 메시지 보기
@@ -39,6 +42,9 @@ uvicorn sdr_agent.app:app --reload                      # 웹 서버 (http://loc
 
 | 경로 | 하는 일 |
 |------|---------|
+| `GET /form` | 웹사이트 데모 신청 폼 (공개, 토큰 불필요) |
+| `POST /webhooks/lead` | 외부 폼 서비스가 보내는 리드 (JSON) |
+| `POST /admin/leads/import` | 시트 업로드. `file`(CSV·xlsx) 또는 `google_sheet`, 기본은 미리보기 (`dry_run=false`로 저장) |
 | `POST /jobs/research` | new 리드 조사 |
 | `POST /jobs/draft` | researched 리드에 첫 메일 초안 |
 | `GET /admin/messages` | 승인 대기 메시지 목록 |
@@ -151,6 +157,15 @@ gcloud scheduler jobs create http sdr-morning-research --location asia-northeast
 
 조사 30분 뒤 초안을 만드는 작업도 같은 방식으로 둔다 (`--uri "$URL/jobs/draft"`, `--schedule "0 8 * * 1-5"`).
 
+## 5. 구글 시트 리드 업로드 권한
+
+시트를 '링크가 있는 모든 사용자'로 공개하지 않는다. 대신 읽는 계정에만 보기 권한을 준다.
+
+- Cloud Run: 서비스 계정 `<PROJECT_NUMBER>-compute@developer.gserviceaccount.com`에 시트를 공유(보기 권한). GCP 프로젝트에서 Sheets API를 켠다: `gcloud services enable sheets.googleapis.com`
+- 로컬: `gcloud auth application-default login --scopes=https://www.googleapis.com/auth/spreadsheets.readonly,https://www.googleapis.com/auth/cloud-platform` 로 로그인한 계정이 시트를 볼 수 있으면 된다.
+
 ## 아직 검증하지 않은 것
+
+- 구글 시트 읽기는 가짜 응답으로만 테스트했다. 실제 시트로 한 번 확인한다.
 
 - 이 문서의 gcloud 명령과 Dockerfile은 실제 배포로 확인하기 전이다. 첫 배포(11/22) 때 확인하고 고친다.

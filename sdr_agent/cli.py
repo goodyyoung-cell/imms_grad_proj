@@ -1,6 +1,8 @@
 """로컬 실행용 명령.
 
   python -m sdr_agent.cli seed                                  # 가상 리드를 DB에 넣기 (data/sample/leads.json)
+  python -m sdr_agent.cli import-leads --file leads.xlsx        # 직원 시트 업로드 미리보기 (--commit 으로 저장)
+  python -m sdr_agent.cli import-leads --google-sheet <주소>     # 구글 시트에서 (서비스 계정에 보기 권한 공유)
   python -m sdr_agent.cli research --limit 5                    # 상태가 new인 리드 5건 조사
   python -m sdr_agent.cli draft --limit 5                       # 조사 끝난 리드에 첫 메일 초안 (승인 대기)
   python -m sdr_agent.cli pending                               # 승인 대기 메시지 보기
@@ -44,6 +46,7 @@ def seed(path: Path) -> list[dict]:
     out = []
     for r in sorted(rows, key=lambda r: bool(r.get("merged_into_key"))):  # 대표 리드 먼저
         row = {k: v for k, v in r.items() if k not in ("key", "days_ago", "merged_into_key")}
+        row["intake_channel"] = "seed"
         row["inbound_at"] = (now - timedelta(days=r.get("days_ago", 0))).isoformat()
         if r.get("merged_into_key"):
             row["merged_into"] = ids[r["merged_into_key"]]
@@ -108,6 +111,13 @@ def main() -> None:
     h.add_argument("--reason", default="담당자 요청")
     h.add_argument("--provider", choices=["claude", "gemini"])
 
+    im = sub.add_parser("import-leads", help="CSV·엑셀 파일 또는 구글 시트의 리드 올리기 (기본은 미리보기)")
+    src = im.add_mutually_exclusive_group(required=True)
+    src.add_argument("--file", type=Path, dest="sheet_file")
+    src.add_argument("--google-sheet", help="구글 시트 주소 또는 ID")
+    im.add_argument("--sheet", help="시트(탭) 이름")
+    im.add_argument("--commit", action="store_true", help="실제로 DB에 저장 (없으면 미리보기만)")
+
     k = sub.add_parser("kb", help="지식베이스 검색")
     k.add_argument("query")
 
@@ -137,6 +147,14 @@ def main() -> None:
     elif args.cmd == "handoff":
         result = jobs.handoff_lead(args.lead_id, reason=args.reason, provider=args.provider)
         print(result["text"])
+    elif args.cmd == "import-leads":
+        from . import sheets
+
+        rows, info = (sheets.read_file(args.sheet_file, args.sheet) if args.sheet_file
+                      else sheets.read_google_sheet(args.google_sheet, args.sheet))
+        _print({**info, **jobs.intake_leads(rows, channel="sheet_upload", dry_run=not args.commit)})
+        if not args.commit:
+            print("\n미리보기입니다. 저장하려면 --commit을 붙여 다시 실행하세요.")
     elif args.cmd == "kb":
         from .kb import default_kb
 

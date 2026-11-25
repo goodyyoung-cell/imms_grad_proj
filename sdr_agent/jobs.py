@@ -18,6 +18,7 @@ from typing import Any, Callable
 from .agent import MemoryRunLog, RunLog, SupabaseRunLog
 from .config import Settings, load_settings
 from .db import Repo, get_client
+from .intake import ingest
 from .llm import get_llm
 from .llm.base import LLM
 from .notify import notify
@@ -39,6 +40,28 @@ def _wire(s: Settings, repo: Any, new_log: NewLog | None) -> tuple[Any, NewLog]:
         client = get_client(s)
         return Repo(client), new_log or (lambda: SupabaseRunLog(client))
     return repo, new_log or MemoryRunLog
+
+
+def intake_leads(
+    rows: list[dict[str, Any]],
+    *,
+    channel: str,
+    consent_at: str | None = None,
+    dry_run: bool = False,
+    settings: Settings | None = None,
+    repo: Any = None,
+) -> dict[str, Any]:
+    """웹 폼·시트 업로드로 들어온 리드를 정규화·중복 병합해 저장한다.
+
+    새 리드는 상태 new로 들어가고, 예약 실행(/jobs/research)이 오래된 순으로 조사한다.
+    """
+    s = settings or load_settings()
+    repo, _ = _wire(s, repo, None)
+    report = ingest(rows, repo, channel=channel, consent_at=consent_at, dry_run=dry_run).as_dict()
+    if not dry_run and (report["created"] or report["merged"]):
+        notify("intake", f"리드 유입 ({channel}): 신규 {report['created']}건, 병합 {report['merged']}건",
+               f"건너뜀 {report['skipped']}건, 오류 {report['errors']}건")
+    return {"dry_run": dry_run, **report}
 
 
 def research_leads(
