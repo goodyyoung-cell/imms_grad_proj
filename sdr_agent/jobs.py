@@ -25,7 +25,7 @@ from .notify import notify
 from .outbox import Sender, get_sender
 from .toolkit.dart import DartClient
 from .toolkit.news import GoogleNewsClient, NaverNewsClient
-from .workflows.draft import compose_body, run_draft
+from .workflows.draft import FOOTER, compose_body, run_draft
 from .workflows.handoff import render_text, run_handoff
 from .workflows.reply import detect_unsubscribe, run_reply_triage
 from .workflows.research import run_research
@@ -185,7 +185,8 @@ def decide_message(
 
     fields: dict[str, Any] = {"status": "approved"}
     if decision == "edited":
-        fields["body"] = edited_body
+        # 사람이 고쳐도 AI 사용 고지와 수신 거부 안내는 빠질 수 없다
+        fields["body"] = edited_body if FOOTER.strip() in edited_body else edited_body.rstrip() + FOOTER
     repo.update_message(message_id, fields)
     return send_message(message_id, repo=repo, sender=sender)
 

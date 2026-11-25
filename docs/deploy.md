@@ -24,6 +24,7 @@ python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 cp .env.example .env      # 값 채우기
 pytest                    # API 키 없이 도는 테스트
+python scripts/smoke_supabase.py   # 실제 Supabase로 루프 전체 점검 (가짜 LLM, 임시 데이터는 끝나고 삭제)
 
 python -m sdr_agent.cli seed                            # 가상 리드 12건을 DB에 넣기 (한 번만)
 python -m sdr_agent.cli import-leads --file data/sample/leads_template.csv            # 시트 업로드 미리보기

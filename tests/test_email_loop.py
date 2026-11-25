@@ -214,6 +214,14 @@ def test_draft_approve_send(repo):
         jobs.decide_message(r["message_id"], "approved", "담당자A", repo=repo, sender=sender)
 
 
+def test_edited_approval_keeps_mandatory_footer(repo):
+    sender = SandboxSender()
+    [r] = jobs.draft_emails(repo=repo, llm=good_draft_llm())
+    jobs.decide_message(r["message_id"], "edited", "담당자A", edited_body="짧게 고친 본문", repo=repo, sender=sender)
+    body = sender.sent[0]["body"]
+    assert body.startswith("짧게 고친 본문") and body.endswith(FOOTER)
+
+
 def test_reject_does_not_send(repo):
     sender = SandboxSender()
     [r] = jobs.draft_emails(repo=repo, llm=good_draft_llm())
