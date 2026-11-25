@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any
 
 from .config import Settings, load_settings
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat()
 
 
 def get_client(settings: Settings | None = None):
@@ -39,6 +44,66 @@ class Repo:
 
     def set_status(self, lead_id: str, status: str) -> None:
         self.c.table("leads").update({"status": status}).eq("id", lead_id).execute()
+
+    def find_lead_by_email(self, email: str) -> dict[str, Any] | None:
+        rows = (self.c.table("leads").select("*").ilike("email", email.strip()).is_("merged_into", "null")
+                .order("inbound_at").limit(1).execute().data)
+        return rows[0] if rows else None
+
+    def unsubscribe(self, lead_id: str) -> None:
+        # DB 트리거가 상태를 unsubscribed로 바꾸고 보내지 않은 메시지를 모두 취소한다
+        self.c.table("leads").update({"unsubscribed_at": _now()}).eq("id", lead_id).execute()
+
+    def list_facts(self, lead_id: str) -> list[dict]:
+        return (self.c.table("research_facts").select("*").eq("lead_id", lead_id)
+                .order("retrieved_at").execute().data)
+
+    def latest_score(self, lead_id: str) -> dict | None:
+        rows = (self.c.table("lead_scores").select("*").eq("lead_id", lead_id)
+                .order("created_at", desc=True).limit(1).execute().data)
+        return rows[0] if rows else None
+
+    # --- 메시지·승인 ---
+
+    def insert_message(self, lead_id: str, run_id: str | None, kind: str, draft: dict) -> dict:
+        return self.c.table("messages").insert({
+            "lead_id": lead_id, "run_id": run_id, "kind": kind,
+            "subject": draft["subject"], "body": draft["body"], "citations": draft.get("citations", []),
+        }).execute().data[0]
+
+    def get_message(self, message_id: str) -> dict:
+        rows = self.c.table("messages").select("*").eq("id", message_id).limit(1).execute().data
+        if not rows:
+            raise LookupError(f"메시지 없음: {message_id}")
+        return rows[0]
+
+    def list_messages(self, lead_id: str | None = None, status: str | None = None, limit: int = 50) -> list[dict]:
+        q = self.c.table("messages").select("*")
+        if lead_id:
+            q = q.eq("lead_id", lead_id)
+        if status:
+            q = q.eq("status", status)
+        return q.order("created_at").limit(limit).execute().data
+
+    def update_message(self, message_id: str, fields: dict) -> dict:
+        return self.c.table("messages").update(fields).eq("id", message_id).execute().data[0]
+
+    def insert_approval(self, row: dict) -> None:
+        self.c.table("approvals").insert(row).execute()
+
+    # --- 답장·인계 ---
+
+    def insert_reply(self, row: dict) -> dict:
+        return self.c.table("replies").insert(row).execute().data[0]
+
+    def list_replies(self, lead_id: str) -> list[dict]:
+        return self.c.table("replies").select("*").eq("lead_id", lead_id).order("received_at").execute().data
+
+    def insert_handoff(self, row: dict) -> dict:
+        return self.c.table("handoffs").insert(row).execute().data[0]
+
+    def insert_lead(self, row: dict) -> dict:
+        return self.c.table("leads").insert(row).execute().data[0]
 
     def save_research(self, lead_id: str, run_id: str | None, facts: list[dict], score: dict | None) -> None:
         if facts:

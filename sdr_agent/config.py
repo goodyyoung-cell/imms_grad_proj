@@ -27,6 +27,8 @@ class Settings:
     dart_api_key: str | None
     job_token: str | None
     agent_max_steps: int
+    booking_url: str | None = None      # 메일 CTA의 미팅 예약 링크 (모듈 3 축소)
+    handoff_to: str | None = None       # 인계 자료를 받을 담당자 (이름 또는 주소)
 
 
 def load_settings() -> Settings:
@@ -41,4 +43,6 @@ def load_settings() -> Settings:
         dart_api_key=_get("DART_API_KEY"),
         job_token=_get("JOB_TOKEN"),
         agent_max_steps=int(_get("AGENT_MAX_STEPS", "8")),
+        booking_url=_get("BOOKING_URL"),
+        handoff_to=_get("HANDOFF_TO"),
     )

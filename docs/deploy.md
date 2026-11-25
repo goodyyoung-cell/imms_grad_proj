@@ -25,9 +25,26 @@ pip install -e ".[dev]"
 cp .env.example .env      # 값 채우기
 pytest                    # API 키 없이 도는 테스트
 
+python -m sdr_agent.cli seed                            # 가상 리드 12건을 DB에 넣기 (한 번만)
 python -m sdr_agent.cli research --limit 3              # 상태가 new인 리드 3건 조사
+python -m sdr_agent.cli draft --limit 3                 # 조사 끝난 리드에 첫 메일 초안 (승인 대기)
+python -m sdr_agent.cli pending                         # 승인 대기 메시지 보기
+python -m sdr_agent.cli approve <message_id> --by 이름   # 승인 → 샌드박스 발송
+python -m sdr_agent.cli reply --from <리드 이메일> "다음 주 미팅 가능합니다"   # 모의 답장 → 분류·인계
+python -m sdr_agent.cli eval-replies                    # 모의 답장 24건 분류 정확도
 uvicorn sdr_agent.app:app --reload                      # 웹 서버 (http://localhost:8000/health)
 ```
+
+웹 API (모두 `Authorization: Bearer <JOB_TOKEN>` 필요)
+
+| 경로 | 하는 일 |
+|------|---------|
+| `POST /jobs/research` | new 리드 조사 |
+| `POST /jobs/draft` | researched 리드에 첫 메일 초안 |
+| `GET /admin/messages` | 승인 대기 메시지 목록 |
+| `POST /admin/messages/{id}/decision` | `{"decision": "approved"\|"rejected"\|"edited", "decided_by": "..."}` 승인하면 바로 샌드박스 발송 |
+| `POST /webhooks/reply` | 답장 도착 `{"from_email": "...", "body": "..."}` |
+| `POST /jobs/handoff` | `{"lead_id": "..."}` 인계 요약 |
 
 ## 3. Cloud Run
 
@@ -131,6 +148,8 @@ gcloud scheduler jobs create http sdr-morning-research --location asia-northeast
   --message-body '{"limit": 10, "trigger": "schedule"}' \
   --attempt-deadline 30m
 ```
+
+조사 30분 뒤 초안을 만드는 작업도 같은 방식으로 둔다 (`--uri "$URL/jobs/draft"`, `--schedule "0 8 * * 1-5"`).
 
 ## 아직 검증하지 않은 것
 

@@ -1,0 +1,14 @@
+[
+  {"key": "L01", "name": "김가상", "email": "kim.gs@hanbit-mall.example", "company_name": "한빛몰", "company_domain": "hanbit-mall.example", "title": "CS팀장", "source": "demo_request", "days_ago": 1, "notes": "데모 요청 메모: 성수기마다 문의가 3배로 늘어 응대가 하루 이상 밀립니다. 카카오톡 채널 문의가 많습니다."},
+  {"key": "L02", "name": "이예시", "email": "lee.ys@nuri-logis.example", "company_name": "누리로지스", "company_domain": "nuri-logis.example", "title": "고객지원본부장", "source": "web_inquiry", "days_ago": 3, "notes": "웹 문의: 배송 문의 분류를 자동화하고 싶습니다. 상담원 15명."},
+  {"key": "L03", "name": "박테스트", "email": "park.ts@dasom-edu.example", "company_name": "다솜에듀", "company_domain": "dasom-edu.example", "title": "매니저", "source": "seminar", "days_ago": 6, "notes": "세미나 'AI로 고객응대 줄이기' 참석. 질문 없음."},
+  {"key": "L04", "name": "최샘플", "email": "choi.sp@gureum-soft.example", "company_name": "구름소프트", "company_domain": "gureum-soft.example", "title": "CTO", "source": "demo_request", "days_ago": 0, "notes": "데모 요청 메모: 기술 지원 문의에 매뉴얼 기반 답변을 쓰고 싶습니다. 보안 정책 확인 필요."},
+  {"key": "L05", "name": "정모의", "email": "jung.mu@saebom-food.example", "company_name": "새봄푸드", "company_domain": "saebom-food.example", "title": "대리", "source": "business_card", "days_ago": 10, "notes": "전시회 명함. 메모 없음."},
+  {"key": "L06", "name": "강가명", "email": "kang.gm@nuri-logis.example", "company_name": "누리로지스", "company_domain": "nuri-logis.example", "title": "과장", "source": "seminar", "days_ago": 4, "merged_into_key": "L02", "notes": "같은 회사 다른 담당자. 세미나 참석."},
+  {"key": "L07", "name": "이예시", "email": "LEE.YS@nuri-logis.example", "company_name": "누리로지스(주)", "company_domain": "nuri-logis.example", "title": "본부장", "source": "seminar", "days_ago": 5, "merged_into_key": "L02", "notes": "L02와 같은 사람(이메일 대소문자·회사명 표기만 다름)."},
+  {"key": "L08", "name": "윤허구", "email": "yoon.hg@pado-travel.example", "company_name": "파도트래블", "company_domain": "pado-travel.example", "title": "프로", "source": "web_inquiry", "days_ago": 2, "notes": "웹 문의: 가격이 궁금합니다. 상담원 3명."},
+  {"key": "L09", "name": "서임시", "email": "seo.is@byeol-beauty.example", "company_name": "별뷰티", "company_domain": "byeol-beauty.example", "title": "대표", "source": "web_inquiry", "days_ago": 1, "notes": "웹 문의: 1인 운영 쇼핑몰인데 써도 되나요?"},
+  {"key": "L10", "name": "한가정", "email": "han.gj@taeyang-parts.example", "company_name": "태양부품", "company_domain": "taeyang-parts.example", "title": "Head of CS", "source": "demo_request", "days_ago": 7, "notes": "데모 요청 메모: 영어 문의도 있습니다. 기존 헬프데스크에서 옮기고 싶습니다."},
+  {"key": "L11", "name": "오예제", "email": "oh.yj@mirae-clinic.example", "company_name": "미래의원", "company_domain": "mirae-clinic.example", "title": "실장", "source": "other", "days_ago": 14, "notes": "지인 소개. 예약 문의 응대가 많다고 함."},
+  {"key": "L12", "name": "문더미", "email": "moon.dm@haneul-it.example", "company_name": "하늘아이티", "company_domain": "haneul-it.example", "title": "책임연구원", "source": "seminar", "days_ago": 8, "notes": "세미나 참석. 고객지원보다는 사내 헬프데스크 관심."}
+]

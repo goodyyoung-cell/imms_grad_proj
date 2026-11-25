@@ -96,13 +96,18 @@ AI가 초기 영업 단계(Top of Funnel)의 반복적인 접촉·응대·선별
 ├── sdr_agent/
 │   ├── llm/             # Claude·Gemini 어댑터. 공통 타입은 base.py
 │   ├── agent/           # 에이전트 루프, 도구 레지스트리, 실행 로그
-│   ├── toolkit/         # 에이전트가 쓰는 도구 (DART, 웹 페이지, 리서치 도구 묶음)
-│   ├── workflows/       # 모듈별 워크플로우 (research.py = 모듈 1)
+│   ├── toolkit/         # 에이전트가 쓰는 도구 (DART, 웹 페이지, 리서치, 지식베이스 검색·근거 확인)
+│   ├── workflows/       # 모듈별 워크플로우 (research=1, draft·reply=2, handoff=4·3축소)
+│   ├── knowledge/       # RAG 지식베이스: 가상 제품 노바데스크 자료 (*.md)
+│   ├── kb.py            # 지식베이스 검색 (지금은 키워드, 나중에 pgvector로 교체 가능)
+│   ├── outbox.py        # 메일 발송 (지금은 샌드박스만. 도구가 아님)
+│   ├── notify.py        # 사람에게 알림 (승인 채널 미정이라 지금은 로그)
 │   ├── scoring.py       # 규칙 기반 리드 점수
 │   ├── db.py            # Supabase 접근
 │   ├── jobs.py          # 예약·이벤트 실행 단위 (app과 cli가 공유)
 │   ├── app.py           # Cloud Run 웹 서버 (/jobs/*, /webhooks/*)
 │   └── cli.py           # 로컬 실행
+├── data/sample/         # 가상 리드(leads.json), 정답 달린 모의 답장(replies.json)
 ├── supabase/migrations/ # DB 스키마 (SQL)
 ├── tests/               # API 키 없이 도는 테스트 (가짜 LLM 사용)
 ├── Dockerfile           # Cloud Run 이미지
