@@ -23,6 +23,7 @@ from .llm.base import LLM
 from .notify import notify
 from .outbox import Sender, get_sender
 from .toolkit.dart import DartClient
+from .toolkit.news import GoogleNewsClient, NaverNewsClient
 from .workflows.draft import compose_body, run_draft
 from .workflows.handoff import render_text, run_handoff
 from .workflows.reply import detect_unsubscribe, run_reply_triage
@@ -59,6 +60,9 @@ def research_leads(
         return []  # 처리할 리드가 없으면 LLM 키 없이도 정상 종료 (첫 배포 점검용)
     llm = llm or get_llm(provider, s)
     dart = DartClient(s.dart_api_key) if s.dart_api_key else None
+    naver = (NaverNewsClient(s.naver_client_id, s.naver_client_secret)
+             if s.naver_client_id and s.naver_client_secret else None)
+    google = GoogleNewsClient() if s.google_news_enabled else None
 
     out: list[dict[str, Any]] = []
     for lead_id in ids:
@@ -66,7 +70,8 @@ def research_leads(
         try:
             lead = repo.get_lead(lead_id)
             log = new_log()
-            result = run_research(lead, llm, log, dart=dart, trigger=trigger, max_steps=s.agent_max_steps)
+            result = run_research(lead, llm, log, dart=dart, naver=naver, google=google, trigger=trigger,
+                                  max_steps=s.agent_max_steps)
             repo.save_research(lead_id, result["run_id"], result["facts"], result["score"])
             repo.set_status(lead_id, "researched")
             out.append({"lead_id": lead_id, **{k: result[k] for k in ("run_id", "status", "stop_reason", "score")},

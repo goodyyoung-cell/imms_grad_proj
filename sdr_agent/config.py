@@ -29,6 +29,9 @@ class Settings:
     agent_max_steps: int
     booking_url: str | None = None      # 메일 CTA의 미팅 예약 링크 (모듈 3 축소)
     handoff_to: str | None = None       # 인계 자료를 받을 담당자 (이름 또는 주소)
+    naver_client_id: str | None = None  # 네이버 검색 API (뉴스)
+    naver_client_secret: str | None = None
+    google_news_enabled: bool = True    # Google 뉴스 RSS (키 불필요)
 
 
 def load_settings() -> Settings:
@@ -42,7 +45,10 @@ def load_settings() -> Settings:
         supabase_secret_key=_get("SUPABASE_SECRET_KEY"),
         dart_api_key=_get("DART_API_KEY"),
         job_token=_get("JOB_TOKEN"),
-        agent_max_steps=int(_get("AGENT_MAX_STEPS", "8")),
+        agent_max_steps=int(_get("AGENT_MAX_STEPS", "12")),
+        naver_client_id=_get("NAVER_CLIENT_ID"),
+        naver_client_secret=_get("NAVER_CLIENT_SECRET"),
+        google_news_enabled=_get("GOOGLE_NEWS_ENABLED", "true").lower() not in ("0", "false", "no"),
         booking_url=_get("BOOKING_URL"),
         handoff_to=_get("HANDOFF_TO"),
     )

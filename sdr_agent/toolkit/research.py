@@ -29,6 +29,8 @@ FACT_FIELDS = [
 class ResearchContext:
     lead: dict[str, Any]
     dart: Any = None                      # DartClient 또는 None (키 없음)
+    naver: Any = None                     # NaverNewsClient 또는 None (키 없음)
+    google: Any = None                    # GoogleNewsClient (키 불필요) 또는 None
     fetch: Callable[[str], dict] = fetch_page
     seen_urls: set[str] = field(default_factory=set)
     score: dict[str, Any] | None = None
@@ -41,6 +43,8 @@ class ResearchContext:
     def fetch_webpage(self, url: str) -> dict:
         page = self.fetch(url)
         self._remember(url, page.get("url"))
+        if len(page.get("text", "")) < 100 and not page.get("links"):
+            page["note"] = "본문이 거의 없습니다. 자바스크립트로 그리는 페이지일 수 있으니 뉴스나 DART를 쓰세요."
         return page
 
     def dart_search(self, company_name: str) -> dict:
@@ -70,9 +74,34 @@ class ResearchContext:
         self._remember(fin.get("source_url"))
         return fin
 
-    def news_search(self, query: str) -> dict:
-        # P1: 네이버 검색 API 연동 예정. 지금은 사용 불가를 알려 다른 출처로 넘어가게 한다
-        return {"error": "뉴스 검색은 아직 연결되지 않았습니다. DART와 홈페이지를 쓰세요."}
+    def fetch_company_homepage(self) -> dict:
+        domain = (self.lead.get("company_domain") or "").strip().removeprefix("https://").removeprefix("http://").strip("/")
+        if not domain:
+            return {"error": "리드에 회사 도메인이 없습니다. DART 기업개황의 홈페이지 주소나 뉴스를 쓰세요."}
+        candidates = [f"https://{domain}"] + ([] if domain.startswith("www.") else [f"https://www.{domain}"])
+        errors = []
+        for url in candidates:
+            try:
+                return self.fetch_webpage(url)
+            except Exception as exc:  # 다음 후보로
+                errors.append(f"{url}: {type(exc).__name__}")
+        return {"error": f"홈페이지를 열지 못했습니다 ({'; '.join(errors)}). 뉴스나 DART를 쓰세요."}
+
+    def _news(self, client: Any, name: str, query: str) -> dict:
+        if client is None:
+            return {"error": f"{name} 뉴스 검색을 쓸 수 없습니다(키 없음). 다른 뉴스 출처나 홈페이지를 쓰세요."}
+        items = client.search(query)
+        self._remember(*(i["url"] for i in items))
+        if not items:
+            return {"articles": [], "note": "최근 1년 안의 기사가 없습니다. 검색어를 바꾸거나 다른 출처를 쓰세요."}
+        return {"articles": items, "note": "제목·요약만 있습니다. 사실로 쓸 때는 기사 url을 출처로 달고, "
+                                          "회사와 무관한 동명 기사는 버리세요."}
+
+    def naver_news_search(self, query: str) -> dict:
+        return self._news(self.naver, "네이버", query)
+
+    def google_news_search(self, query: str) -> dict:
+        return self._news(self.google, "Google", query)
 
     def compute_score(
         self,
@@ -106,17 +135,24 @@ class ResearchContext:
 
     def registry(self) -> ToolRegistry:
         corp = {"type": "object", "properties": {"corp_code": {"type": "string"}}, "required": ["corp_code"]}
+        query = {"type": "object", "properties": {"query": {"type": "string", "description": "검색어. 보통 회사명, "
+                 "필요하면 '회사명 고객센터', '회사명 AI' 처럼 좁힌다"}}, "required": ["query"]}
         return ToolRegistry([
+            Tool("fetch_company_homepage", "리드가 남긴 회사 도메인의 홈페이지 첫 화면을 읽는다 (https, www 순으로 시도). "
+                 "본문과 같은 사이트 링크 목록을 돌려준다.",
+                 {"type": "object", "properties": {}}, self.fetch_company_homepage),
             Tool("fetch_webpage", "웹 페이지 하나를 읽어 제목, 본문(최대 6000자), 같은 사이트의 링크 목록을 돌려준다. "
-                 "회사 홈페이지에서 시작해, 링크 중 회사 소개·제품·고객사례 페이지를 골라 더 읽는다.",
+                 "홈페이지 링크 중 회사 소개·제품·고객사례 페이지를 골라 더 읽거나, 뉴스 원문을 읽을 때 쓴다.",
                  {"type": "object", "properties": {"url": {"type": "string"}}, "required": ["url"]}, self.fetch_webpage),
+            Tool("naver_news_search", "네이버 뉴스에서 최근 1년 기사를 최신순으로 최대 6건 찾는다 (제목, 요약, 언론사, 날짜, 원문 url). "
+                 "국내 기업 소식에 강하다.", query, self.naver_news_search),
+            Tool("google_news_search", "Google 뉴스에서 최근 1년 기사를 최신순으로 최대 6건 찾는다 (제목, 언론사, 날짜, url). "
+                 "네이버에 없는 매체나 해외 보도를 보완한다.", query, self.google_news_search),
             Tool("dart_search", "DART에서 회사명으로 고유번호(corp_code) 후보를 찾는다. 상장·외감 법인 위주라 소기업은 없을 수 있다.",
                  {"type": "object", "properties": {"company_name": {"type": "string"}}, "required": ["company_name"]}, self.dart_search),
             Tool("dart_company", "DART 기업개황: 대표자, 업종, 설립일, 홈페이지 주소.", corp, self.dart_company),
             Tool("dart_disclosures", "DART 최근 6개월 공시 최대 5건 (제목, 날짜, 원문 링크).", corp, self.dart_disclosures),
             Tool("dart_financials", "DART 사업보고서 기준 직전 연도 매출액(억 원)과 영업이익률(%).", corp, self.dart_financials),
-            Tool("news_search", "회사 관련 최근 뉴스를 검색한다.",
-                 {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}, self.news_search),
             Tool("compute_score", "규칙 기반 우선순위 점수와 근거 태그를 계산한다. 찾은 재무정보와 최근 공시 여부를 넣는다. "
                  "모르는 값은 비워 둔다 (중립 점수 처리).",
                  {"type": "object", "properties": {

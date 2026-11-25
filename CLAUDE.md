@@ -96,7 +96,7 @@ AI가 초기 영업 단계(Top of Funnel)의 반복적인 접촉·응대·선별
 ├── sdr_agent/
 │   ├── llm/             # Claude·Gemini 어댑터. 공통 타입은 base.py
 │   ├── agent/           # 에이전트 루프, 도구 레지스트리, 실행 로그
-│   ├── toolkit/         # 에이전트가 쓰는 도구 (DART, 웹 페이지, 리서치, 지식베이스 검색·근거 확인)
+│   ├── toolkit/         # 에이전트가 쓰는 도구 (홈페이지·DART·네이버/Google 뉴스, 지식베이스 검색·근거 확인)
 │   ├── workflows/       # 모듈별 워크플로우 (research=1, draft·reply=2, handoff=4·3축소)
 │   ├── knowledge/       # RAG 지식베이스: 가상 제품 노바데스크 자료 (*.md)
 │   ├── kb.py            # 지식베이스 검색 (지금은 키워드, 나중에 pgvector로 교체 가능)

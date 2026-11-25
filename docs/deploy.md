@@ -106,11 +106,11 @@ gcloud services enable run.googleapis.com cloudbuild.googleapis.com artifactregi
 
 # 비밀값을 Secret Manager에 넣기 (값마다 반복)
 printf '%s' "<값>" | gcloud secrets create anthropic-api-key --data-file=-
-# gemini-api-key, supabase-url, supabase-secret-key, dart-api-key, job-token 도 같은 방식
+# gemini-api-key, supabase-url, supabase-secret-key, dart-api-key, naver-client-id, naver-client-secret, job-token 도 같은 방식
 
 # Cloud Run 서비스 계정이 비밀값을 읽을 수 있게 (기본 컴퓨트 서비스 계정 기준)
 PROJECT_NUMBER=$(gcloud projects describe <PROJECT_ID> --format='value(projectNumber)')
-for s in anthropic-api-key gemini-api-key supabase-url supabase-secret-key dart-api-key job-token; do
+for s in anthropic-api-key gemini-api-key supabase-url supabase-secret-key dart-api-key naver-client-id naver-client-secret job-token; do
   gcloud secrets add-iam-policy-binding $s \
     --member="serviceAccount:${PROJECT_NUMBER}-compute@developer.gserviceaccount.com" \
     --role=roles/secretmanager.secretAccessor
@@ -122,8 +122,8 @@ done
 ```bash
 gcloud run deploy sdr-agent --source . --region asia-northeast3 \
   --allow-unauthenticated --timeout 3600 --memory 1Gi \
-  --set-env-vars DEFAULT_LLM=claude,ANTHROPIC_MODEL=claude-sonnet-5-5,GEMINI_MODEL=<모델명> \
-  --set-secrets ANTHROPIC_API_KEY=anthropic-api-key:latest,GEMINI_API_KEY=gemini-api-key:latest,SUPABASE_URL=supabase-url:latest,SUPABASE_SECRET_KEY=supabase-secret-key:latest,DART_API_KEY=dart-api-key:latest,JOB_TOKEN=job-token:latest
+  --set-env-vars DEFAULT_LLM=claude,ANTHROPIC_MODEL=claude-sonnet-5-5,GEMINI_MODEL=<모델명>,AGENT_MAX_STEPS=12 \
+  --set-secrets ANTHROPIC_API_KEY=anthropic-api-key:latest,GEMINI_API_KEY=gemini-api-key:latest,SUPABASE_URL=supabase-url:latest,SUPABASE_SECRET_KEY=supabase-secret-key:latest,DART_API_KEY=dart-api-key:latest,NAVER_CLIENT_ID=naver-client-id:latest,NAVER_CLIENT_SECRET=naver-client-secret:latest,JOB_TOKEN=job-token:latest
 ```
 
 - `--allow-unauthenticated`: 승인 버튼 웹훅이 외부에서 들어와야 해서 공개로 둔다. 대신 `/jobs/*`는 `JOB_TOKEN`으로 막는다.
