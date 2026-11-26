@@ -45,6 +45,7 @@ uvicorn sdr_agent.app:app --reload                      # 웹 서버 (http://loc
 
 | 경로 | 하는 일 |
 |------|---------|
+| `POST /auth/login` | 관리 화면 로그인 `{"name", "password"}` → 8시간 토큰 (`/admin/*`에 사용). 화면용 API 전체는 [`frontend-handoff.md`](frontend-handoff.md) |
 | `GET /form` | 웹사이트 데모 신청 폼 (공개, 토큰 불필요) |
 | `POST /webhooks/lead` | 외부 폼 서비스가 보내는 리드 (JSON) |
 | `POST /admin/leads/import` | 시트 업로드. `file`(CSV·xlsx) 또는 `google_sheet`, 기본은 미리보기 (`dry_run=false`로 저장) |

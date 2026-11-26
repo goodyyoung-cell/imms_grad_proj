@@ -41,6 +41,8 @@ AI가 초기 영업 단계(Top of Funnel)의 반복적인 접촉·응대·선별
 - **점수는 규칙으로**: LLM은 점수를 매기지 않고, 규칙 점수 도구를 호출해 근거를 설명한다
 - **모든 실행은 로그를 남긴다**: 어떤 도구를 왜 골랐는지, 무엇이 승인됐는지. 평가와 보고서에 쓴다
 
+**관리 화면(프론트엔드) 작업을 한다면 먼저 [`docs/frontend-handoff.md`](docs/frontend-handoff.md)를 읽는다.** 쓸 API, 로그인 방식, 화면 구성, 시작 전에 할 일(PR #2 머지, 브랜치)이 있다.
+
 이번 학기 구현 범위는 [`docs/scope.md`](docs/scope.md)를 따른다. 모듈 1·2·4를 잇는 루프가 P0, 3은 인계 요약의 "확인할 질문"으로 축소, 5는 보고서 설계안으로만 둔다.
 전화는 SDR이 직접 건다(전화 시스템 연동 없음). 시스템이 콜 과제를 취소하는 경우는 수신 거부 하나뿐이다.
 
@@ -93,6 +95,7 @@ AI가 초기 영업 단계(Top of Funnel)의 반복적인 접촉·응대·선별
 │   ├── decisions.md     # 주요 결정 기록 (무엇을, 왜)
 │   ├── scope.md         # 이번 학기 구현 범위 (P0/P1/축소)
 │   ├── deploy.md        # Supabase·Cloud Run 배포 방법
+│   ├── frontend-handoff.md  # 관리 화면 개발 안내 (API·로그인·화면 구성)
 │   └── meetings/        # 회의 메모
 ├── sdr_agent/
 │   ├── llm/             # Claude·Gemini 어댑터. 공통 타입은 base.py
@@ -101,6 +104,7 @@ AI가 초기 영업 단계(Top of Funnel)의 반복적인 접촉·응대·선별
 │   ├── workflows/       # 모듈별 워크플로우 (research=1, draft·reply=2, handoff=4·3축소)
 │   ├── knowledge/       # RAG 지식베이스: 가상 제품 노바데스크 자료 (*.md)
 │   ├── kb.py            # 지식베이스 검색 (지금은 키워드, 나중에 pgvector로 교체 가능)
+│   ├── auth.py          # 관리 화면 로그인 토큰 (ADMIN_PASSWORD)
 │   ├── intake.py        # 리드 유입: 정규화·중복 병합 (웹 폼과 시트 업로드 공통)
 │   ├── sheets.py        # CSV·엑셀·구글 시트 읽기, 열 이름 별칭
 │   ├── webform.py       # 웹사이트 데모 신청 폼 (동의·봇 방지)

@@ -15,6 +15,10 @@ def _get(name: str, default: str | None = None) -> str | None:
     return value if value else default
 
 
+# 로컬 프론트엔드 개발 서버 (Next.js 3000, Vite 5173, 기타 흔한 포트)
+DEFAULT_ORIGINS = ",".join(f"http://{h}:{p}" for h in ("localhost", "127.0.0.1") for p in (3000, 3001, 4173, 5173, 8080))
+
+
 @dataclass(frozen=True)
 class Settings:
     anthropic_api_key: str | None
@@ -33,6 +37,9 @@ class Settings:
     naver_client_secret: str | None = None
     naver_search_api: str = "hub"       # hub: 네이버 클라우드 NAVER API HUB (기본), legacy: 예전 개발자센터 키
     google_news_enabled: bool = True    # Google 뉴스 RSS (키 불필요)
+    admin_password: str | None = None  # 관리 화면 로그인 비밀번호 (팀 공유)
+    admin_token_secret: str | None = None  # 로그인 토큰 서명 키 (없으면 JOB_TOKEN에서 만듦)
+    allowed_origins: tuple[str, ...] = ()  # 관리 화면이 다른 주소에서 뜰 때 허용할 출처 (CORS)
     call_delay_minutes: int = 60        # 첫 메일 발송 후 최소 몇 분 뒤 전화할지
     call_hours_kst: tuple[int, int] = (9, 18)  # 전화해도 되는 시간대 (평일, 한국 시간, 시작 이상 끝 미만)
 
@@ -53,6 +60,9 @@ def load_settings() -> Settings:
         naver_client_secret=_get("NAVER_CLIENT_SECRET"),
         naver_search_api=_get("NAVER_SEARCH_API", "hub"),
         google_news_enabled=_get("GOOGLE_NEWS_ENABLED", "true").lower() not in ("0", "false", "no"),
+        admin_password=_get("ADMIN_PASSWORD"),
+        admin_token_secret=_get("ADMIN_TOKEN_SECRET"),
+        allowed_origins=tuple(o.strip() for o in _get("ALLOWED_ORIGINS", DEFAULT_ORIGINS).split(",") if o.strip()),
         call_delay_minutes=int(_get("CALL_DELAY_MINUTES", "60")),
         call_hours_kst=tuple(int(h) for h in _get("CALL_HOURS_KST", "9-18").split("-", 1)),
         booking_url=_get("BOOKING_URL"),

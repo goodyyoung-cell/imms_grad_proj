@@ -151,6 +151,70 @@ class Repo:
     def update_call_task(self, task_id: str, fields: dict) -> dict:
         return self.c.table("call_tasks").update(fields).eq("id", task_id).execute().data[0]
 
+    # --- 관리 화면 조회 ---
+
+    LEAD_LIST_COLS = ("id,name,email,company_name,company_domain,title,source,intake_channel,status,"
+                      "inbound_at,updated_at,unsubscribed_at,consent_at")
+
+    def list_leads(self, status: str | None = None, q: str | None = None,
+                   limit: int = 50, offset: int = 0) -> tuple[list[dict], int]:
+        """대표 리드(병합되지 않은 리드) 목록과 전체 개수. 최근 변경 순."""
+        query = (self.c.table("leads").select(self.LEAD_LIST_COLS, count="exact").is_("merged_into", "null"))
+        if status:
+            query = query.eq("status", status)
+        if q:
+            query = query.ilike("company_name", f"%{q.strip()}%")
+        res = query.order("updated_at", desc=True).range(offset, offset + limit - 1).execute()
+        return res.data, res.count or 0
+
+    def latest_scores(self, lead_ids: list[str]) -> dict[str, dict]:
+        if not lead_ids:
+            return {}
+        rows = (self.c.table("lead_scores").select("lead_id,score,tags,created_at").in_("lead_id", lead_ids)
+                .order("created_at", desc=True).execute().data)
+        out: dict[str, dict] = {}
+        for r in rows:
+            out.setdefault(r["lead_id"], r)
+        return out
+
+    def leads_by_ids(self, ids: list[str]) -> dict[str, dict]:
+        ids = [i for i in set(ids) if i]
+        if not ids:
+            return {}
+        rows = self.c.table("leads").select("id,name,company_name,title,status,email,phone").in_("id", ids).execute().data
+        return {r["id"]: r for r in rows}
+
+    def status_counts(self) -> dict[str, int]:
+        rows = self.c.table("leads").select("status").is_("merged_into", "null").execute().data
+        counts: dict[str, int] = {}
+        for r in rows:
+            counts[r["status"]] = counts.get(r["status"], 0) + 1
+        return counts
+
+    def merged_leads(self, lead_id: str) -> list[dict]:
+        return (self.c.table("leads").select("id,name,email,company_name,title,source,intake_channel,inbound_at")
+                .eq("merged_into", lead_id).order("inbound_at").execute().data)
+
+    def list_handoffs(self, lead_id: str) -> list[dict]:
+        return self.c.table("handoffs").select("*").eq("lead_id", lead_id).order("created_at").execute().data
+
+    def list_runs(self, lead_id: str | None = None, workflow: str | None = None, limit: int = 50) -> list[dict]:
+        q = self.c.table("agent_runs").select("*")
+        if lead_id:
+            q = q.eq("lead_id", lead_id)
+        if workflow:
+            q = q.eq("workflow", workflow)
+        return q.order("started_at", desc=True).limit(limit).execute().data
+
+    def get_run(self, run_id: str) -> dict:
+        rows = self.c.table("agent_runs").select("*").eq("id", run_id).limit(1).execute().data
+        if not rows:
+            raise LookupError(f"실행 기록 없음: {run_id}")
+        run = rows[0]
+        run["steps"] = (self.c.table("agent_steps").select("*").eq("run_id", run_id)
+                        .order("step_no").execute().data)
+        return run
+
     def insert_lead(self, row: dict) -> dict:
         return self.c.table("leads").insert(row).execute().data[0]
 
