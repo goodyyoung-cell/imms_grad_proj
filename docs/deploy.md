@@ -2,7 +2,7 @@
 
 ## 1. Supabase
 
-**현재 상태 (2026-11-21)**: 조직 `IMMS Graduation Project`에 프로젝트 `sdr-agent`를 만들었고(서울 `ap-northeast-2`), `supabase/migrations/`의 두 파일을 적용했다. 수신 거부·미승인 발송 트리거도 실제 DB에서 확인했다.
+**현재 상태 (2026-11-26)**: 조직 `IMMS Graduation Project`의 프로젝트 `sdr-agent`(서울 `ap-northeast-2`)에 `supabase/migrations/`의 마이그레이션 5개를 모두 적용했다 (리드 유입·동의, 콜 과제, 통화 기록 포함). 평가용 샘플 리드 106건 입력. 안전장치 트리거는 `scripts/smoke_supabase.py`로 실제 DB에서 확인한다.
 
 - `SUPABASE_URL`: `https://huldtztohuzrkfgguyxv.supabase.co`
 
@@ -60,6 +60,8 @@ uvicorn sdr_agent.app:app --reload                      # 웹 서버 (http://loc
 ## 3. Cloud Run
 
 **현재 상태 (2026-11-22)**: GCP 프로젝트 `gen-lang-client-0136144273`, 리전 `asia-northeast3`(서울), 결제 계정 연결 완료. 팀원은 IAM에서 이 프로젝트에 초대받아 쓴다.
+
+**현재 상태 (2026-11-26)**: 최신 코드 배포 완료 (리비전 `sdr-agent-00004`). Anthropic·Gemini·DART·네이버(API HUB) 키를 Secret Manager로 연결했다 (`scripts/sync_secrets.sh`). Cloud Run에서 실제 리서치 1건 성공. 예약 실행 2개 등록 (`scripts/setup_scheduler.sh`): 평일 07:30 리서치 5건, 08:00 초안 최대 10건. Gemini는 AI Studio 선불 크레딧 소진(402)으로 아직 호출 불가, `GEMINI_MODEL` 미정.
 
 ### 첫 배포 (LLM 키 없이 DB 연결까지만 확인)
 
@@ -150,6 +152,8 @@ curl -X POST $URL/jobs/research -H "Authorization: Bearer <JOB_TOKEN>" \
 ```
 
 ## 4. Cloud Scheduler (평일 아침 리서치)
+
+`bash scripts/setup_scheduler.sh`로 등록·갱신한다 (하루 처리량: `RESEARCH_LIMIT=10 bash scripts/setup_scheduler.sh`). 아래는 수동으로 할 때의 명령이다.
 
 ```bash
 gcloud scheduler jobs create http sdr-morning-research --location asia-northeast3 \
