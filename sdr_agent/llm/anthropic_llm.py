@@ -64,4 +64,5 @@ class ClaudeLLM:
                 text_parts.append(block.text)
             elif block.type == "tool_use":
                 calls.append(ToolCall(id=block.id, name=block.name, args=dict(block.input or {})))
-        return LLMResponse(text="\n".join(text_parts), tool_calls=calls, raw=resp)
+        return LLMResponse(text="\n".join(text_parts), tool_calls=calls, raw=resp,
+                           truncated=getattr(resp, "stop_reason", None) == "max_tokens")

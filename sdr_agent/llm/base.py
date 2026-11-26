@@ -58,6 +58,7 @@ class LLMResponse:
     text: str
     tool_calls: list[ToolCall]
     raw: Any = None
+    truncated: bool = False  # 최대 출력 길이에서 잘림 (도구 입력이 불완전할 수 있음)
 
 
 class LLM(Protocol):

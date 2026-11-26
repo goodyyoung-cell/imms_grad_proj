@@ -82,3 +82,17 @@ def test_unknown_tool_is_reported_not_raised():
     res = run_agent(llm, "sys", "goal", ToolRegistry(), log, workflow="test")
     assert res.stop_reason == "finished" and res.final_text == "끝"
     assert log.steps[1].is_error
+
+
+def test_truncated_response_is_not_executed_and_agent_is_told_why():
+    calls = []
+    reg = ToolRegistry([Tool("submit", "제출", {"type": "object", "properties": {"x": {"type": "string"}}, "required": ["x"]},
+                             lambda x: calls.append(x) or {"ok": x}, terminal=True)])
+    llm = ScriptedLLM([
+        LLMResponse("", [ToolCall("c1", "submit", {})], truncated=True),   # 길이 제한으로 잘린 호출
+        LLMResponse("", [ToolCall("c2", "submit", {"x": "짧게"})]),
+    ])
+    log = MemoryRunLog()
+    res = run_agent(llm, "sys", "goal", reg, log, workflow="test")
+    assert calls == ["짧게"] and res.stop_reason == "terminal_tool"
+    assert "잘려" in log.steps[1].output["error"]

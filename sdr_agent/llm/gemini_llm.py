@@ -70,6 +70,7 @@ class GeminiLLM:
             model=self.model, contents=self.to_provider_contents(messages), config=config
         )
         content = resp.candidates[0].content if resp.candidates else None
+        finish = str(getattr(resp.candidates[0], "finish_reason", "") or "") if resp.candidates else ""
         text_parts: list[str] = []
         calls: list[ToolCall] = []
         for part in (content.parts if content and content.parts else []):
@@ -78,4 +79,4 @@ class GeminiLLM:
                 calls.append(ToolCall(id=fc.id or f"call_{uuid.uuid4().hex[:8]}", name=fc.name, args=dict(fc.args or {})))
             elif part.text and not getattr(part, "thought", False):
                 text_parts.append(part.text)
-        return LLMResponse(text="\n".join(text_parts), tool_calls=calls, raw=content)
+        return LLMResponse(text="\n".join(text_parts), tool_calls=calls, raw=content, truncated="MAX_TOKENS" in finish)

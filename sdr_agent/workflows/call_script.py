@@ -50,7 +50,7 @@ DEFAULT_CR_QUESTIONS = [
 RECORD_FIELDS = ["메일 수신 여부", "희망 미팅 시기", "Compelling Reason", "통화 결과"]
 
 SYSTEM = """당신은 노바웍스(제품: 노바데스크) SDR이 전화 팔로업을 준비하도록 돕는 에이전트입니다.
-한 시간 전쯤 고객에게 메일을 보냈습니다. SDR이 전화로
+고객에게 메일을 보냈고, SDR이 곧 전화합니다 (메일을 언제 보냈는지는 목표에 적힌 표현을 그대로 쓰세요). SDR이 전화로
 1) 메일을 잘 받으셨는지 확인하고, 2) 미팅을 언제쯤 원하시는지 묻고,
 3) 고객사의 Compelling Reason(왜 지금 바꿔야 하는가)을 찾도록 콜 스크립트를 씁니다.
 
@@ -68,7 +68,21 @@ SYSTEM = """당신은 노바웍스(제품: 노바데스크) SDR이 전화 팔로
 - 다 쓰면 submit_call_script를 호출합니다."""
 
 
-def build_goal(lead: dict, facts: list[dict], score: dict | None, sent: dict) -> str:
+def sent_phrase(sent_at, call_at) -> str:
+    """통화 시점에서 본 메일 발송 시점 표현: 같은 날 '조금 전에', 다음 날 '어제', 그 밖은 'M월 D일에'."""
+    if not sent_at or not call_at:
+        return "조금 전에"
+    from datetime import timedelta, timezone
+    kst = timezone(timedelta(hours=9))
+    s, c = sent_at.astimezone(kst).date(), call_at.astimezone(kst).date()
+    if s == c:
+        return "조금 전에"
+    if (c - s).days == 1:
+        return "어제"
+    return f"{s.month}월 {s.day}일에"
+
+
+def build_goal(lead: dict, facts: list[dict], score: dict | None, sent: dict, when_sent: str = "조금 전에") -> str:
     card = {k: lead.get(k) for k in ("name", "company_name", "title", "source", "notes")}
     fact_card = [{"fact_id": f["id"], "field": f["field"], "value": f["value"]} for f in facts]
     return (
@@ -76,6 +90,7 @@ def build_goal(lead: dict, facts: list[dict], score: dict | None, sent: dict) ->
         f"리드: {json.dumps(card, ensure_ascii=False, default=str)}\n"
         f"리서치 사실: {json.dumps(fact_card, ensure_ascii=False)}\n"
         f"선별 근거 태그: {json.dumps((score or {}).get('tags', []), ensure_ascii=False)}\n"
+        f"메일을 보낸 때 (통화 시점 기준, 이 표현을 그대로 쓰세요): {when_sent}\n"
         f"보낸 메일 제목: {sent.get('subject')}\n보낸 메일 본문:\n\"\"\"\n{(sent.get('body') or '')[:3000]}\n\"\"\""
     )
 
@@ -85,12 +100,12 @@ def default_objections(limit: int = 3) -> list[dict]:
     return [{"objection": c.heading, "response": c.text, "kb_ids": [c.id]} for c in chunks]
 
 
-def assemble(lead: dict, sent: dict, parts: dict, booking_url: str | None) -> dict[str, Any]:
+def assemble(lead: dict, sent: dict, parts: dict, booking_url: str | None, when_sent: str = "조금 전에") -> dict[str, Any]:
     """LLM 결과(또는 기본값)에 필수 문구와 고정 항목을 붙여 최종 스크립트로."""
     who = lead.get("name") or "담당자"
     title = f" {lead['title']}" if lead.get("title") else ""
     opening = (f"안녕하세요, {who}{title}님. 노바웍스 노바데스크 담당자 ○○○입니다. "
-               f"조금 전에 '{sent.get('subject')}' 제목으로 메일을 드렸는데, 잘 받아 보셨을까요?")
+               f"{when_sent} '{sent.get('subject')}' 제목으로 메일을 드렸는데, 잘 받아 보셨을까요?")
     if parts.get("opening_hook"):
         opening += " " + parts["opening_hook"].strip()
     meeting_ask = parts.get("meeting_ask") or ("20분 정도 화면으로 직접 보여 드리고 싶은데, 미팅은 언제쯤이 편하실까요? "
@@ -107,8 +122,8 @@ def assemble(lead: dict, sent: dict, parts: dict, booking_url: str | None) -> di
         "meeting_ask": meeting_ask,
         "compelling_questions": parts.get("compelling_questions") or DEFAULT_CR_QUESTIONS,
         "objections": parts.get("objections") or default_objections(),
-        "voicemail": parts.get("voicemail") or (f"안녕하세요, 노바웍스 ○○○입니다. {who}님께 조금 전 노바데스크 관련 메일을 드려서 "
-                                                  "확인차 연락드렸습니다. 메일로 편한 시간을 알려 주시면 다시 연락드리겠습니다. 감사합니다."),
+        "voicemail": parts.get("voicemail") or (f"안녕하세요, 노바웍스 ○○○입니다. {who}님께 {when_sent} 노바데스크 관련 메일을 "
+                                                  "드려서 확인차 연락드렸습니다. 메일로 편한 시간을 알려 주시면 다시 연락드리겠습니다. 감사합니다."),
         "record_fields": RECORD_FIELDS,
         "citations": parts.get("citations", []),
         "outcomes": ["interested", "not_now", "needs_info", "no_answer", "voicemail", "wrong_contact", "unsubscribe"],
@@ -127,10 +142,11 @@ def run_call_script(
     knowledge: KnowledgeContext | None = None,
     booking_url: str | None = None,
     trigger: str = "email_sent",
-    max_steps: int = 6,
+    max_steps: int = 8,
+    when_sent: str = "조금 전에",
 ) -> dict[str, Any]:
     if llm is None or log is None:
-        return {"run_id": None, "by": "rule", "script": assemble(lead, sent, {}, booking_url)}
+        return {"run_id": None, "by": "rule", "script": assemble(lead, sent, {}, booking_url, when_sent)}
 
     kctx = knowledge or KnowledgeContext()
     fact_ids = {f["id"] for f in facts}
@@ -193,11 +209,11 @@ def run_call_script(
              }, "required": ["email_summary", "meeting_ask", "compelling_questions", "objections", "voicemail"]},
              submit_call_script, terminal=True),
     ])
-    result = run_agent(llm, SYSTEM, build_goal(lead, facts, score, sent), registry, log,
+    result = run_agent(llm, SYSTEM, build_goal(lead, facts, score, sent, when_sent), registry, log,
                        workflow="call_script", trigger=trigger, lead_id=lead.get("id"), max_steps=max_steps)
     parts = result.terminal_output or {}
     return {"run_id": log.run_id, "by": "agent" if parts else "rule",
-            "stop_reason": result.stop_reason, "script": assemble(lead, sent, parts, booking_url)}
+            "stop_reason": result.stop_reason, "script": assemble(lead, sent, parts, booking_url, when_sent)}
 
 
 def render_text(script: dict, lead: dict, due_at: str | None = None) -> str:

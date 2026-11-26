@@ -133,3 +133,13 @@ def test_naver_legacy_mode_and_hub_error_message():
         raise AssertionError("오류가 나야 합니다")
     except RuntimeError as exc:
         assert "HTTP 401" in str(exc) and "Authentication Failed" in str(exc)
+
+
+def test_won_text_formats_eok_amounts():
+    from sdr_agent.toolkit.dart import won_text
+
+    assert won_text(49658.0) == "4조 9,658억 원"
+    assert won_text(9658.4) == "9,658억 원"
+    assert won_text(20000) == "2조 원"
+    assert won_text(-350.2) == "-350억 원"
+    assert won_text(None) is None

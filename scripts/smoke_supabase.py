@@ -48,6 +48,21 @@ def call(name, **args):
     return ToolCall(f"smoke-{name}-{uuid.uuid4().hex[:6]}", name, args)
 
 
+def call_script_llm() -> Scripted:
+    """콜 스크립트용 각본: 반대 의견 자료를 찾고, 근거를 달아 제출한다."""
+    return Scripted(
+        LLMResponse("", [call("search_kb", query="지금 쓰는 도구가 있다")]),
+        LLMResponse("", [call("submit_call_script", email_summary="문의 응대 시간을 줄이는 방법을 안내드렸습니다.",
+                              meeting_ask="20분 데모는 언제쯤 편하실까요?", voicemail="메일 드려 연락드렸습니다.",
+                              compelling_questions=[
+                                  {"angle": "계기", "question": "살펴보시게 된 계기가 있으셨나요?", "listen_for": "최근 사건"},
+                                  {"angle": "기한", "question": "언제까지 해결되면 좋을까요?", "listen_for": "기한과 이유"},
+                                  {"angle": "미해결 비용", "question": "그대로 두면 무엇이 부담되세요?", "listen_for": "비용·이탈"}],
+                              objections=[{"objection": "지금 쓰는 도구가 있다", "response": "불편한 점부터 여쭙겠습니다.",
+                                           "kb_ids": ["04_objections#지금 쓰는 도구가 있다"]}])]),
+    )
+
+
 results: list[tuple[bool, str]] = []
 
 
@@ -136,7 +151,8 @@ def main() -> int:
         check("AI의 도움" in msg.get("body", "") and "수신 거부" in msg.get("body", ""), "A7 AI 고지·수신 거부 안내 첨부")
         check(repo.get_lead(a)["status"] == "awaiting_approval", "A8 리드 상태 awaiting_approval")
 
-        out = jobs.decide_message(d["message_id"], "approved", "스모크 점검", channel="cli", repo=repo, sender=sender)
+        out = jobs.decide_message(d["message_id"], "approved", "스모크 점검", channel="cli", repo=repo, sender=sender,
+                                  llm=call_script_llm(), new_log=new_log)
         sent = repo.get_message(d["message_id"])
         check(out["status"] == "sent" and sent["status"] == "sent" and sent["sent_at"] and len(sender.sent) == 1,
               "A9 승인 → 샌드박스 발송, sent_at 기록", out)
@@ -147,7 +163,7 @@ def main() -> int:
         sent_at = datetime.fromisoformat(sent["sent_at"].replace("Z", "+00:00"))
         due = datetime.fromisoformat(tasks[0]["due_at"].replace("Z", "+00:00")) if tasks else sent_at
         sc = tasks[0]["script"] if tasks else {}
-        check(ct.get("status") == "pending" and len(tasks) == 1 and (due - sent_at).total_seconds() >= 3600
+        check(ct.get("status") == "pending" and ct.get("by") == "agent" and len(tasks) == 1 and (due - sent_at).total_seconds() >= 3600
               and "잘 받아 보셨을까요" in sc.get("opening", "") and sc.get("meeting_ask") and len(sc.get("compelling_questions", [])) >= 3,
               "A10b 첫 메일 발송 → 1시간 이후 전화 과제, 스크립트(수신 확인·미팅 시기·Compelling Reason)", ct)
 
@@ -220,7 +236,8 @@ def main() -> int:
         repo.set_status(c, "researched")
         llm = Scripted(LLMResponse("", [call("submit_draft", subject="데모 요청 감사합니다", body="데모 요청 감사합니다. 20분 통화 가능하실까요?")]))
         [d] = jobs.draft_emails([c], repo=repo, llm=llm, new_log=new_log)
-        out = jobs.decide_message(d["message_id"], "approved", "스모크 점검", repo=repo, sender=sender)
+        out = jobs.decide_message(d["message_id"], "approved", "스모크 점검", repo=repo, sender=sender,
+                                  llm=call_script_llm(), new_log=new_log)
         task_id = out["call_task"]["task_id"]
         res = jobs.record_call_outcome(task_id, "not_now", "스모크 점검", email_received=True,
                                        meeting_preference="1월 둘째 주", compelling_reason="1분기 콜센터 인력 축소 예정",
@@ -229,7 +246,7 @@ def main() -> int:
         check(res["action"] == "replied" and t["status"] == "done" and t["called_at"] and t["email_received"] is True
               and t["meeting_preference"] == "1월 둘째 주" and t["compelling_reason"] == "1분기 콜센터 인력 축소 예정"
               and repo.get_lead(c)["status"] == "replied", "C1 통화 결과·수신 여부·희망 미팅·Compelling Reason 기록", res)
-        again = jobs.create_call_task(d["message_id"], repo=repo, new_log=new_log)
+        again = jobs.create_call_task(d["message_id"], repo=repo, llm=call_script_llm(), new_log=new_log)
         repo.unsubscribe(c)
         check(repo.get_call_task(again["task_id"])["status"] == "cancelled",
               "C2 수신 거부 시 대기 중인 전화도 자동 취소 (DB 트리거)")

@@ -30,7 +30,7 @@ from .toolkit.dart import DartClient
 from .toolkit.news import GoogleNewsClient, NaverNewsClient
 from .workflows.draft import FOOTER, compose_body, run_draft
 from .workflows.call_script import render_text as render_call_script
-from .workflows.call_script import run_call_script
+from .workflows.call_script import run_call_script, sent_phrase
 from .workflows.handoff import render_text, run_handoff
 from .workflows.reply import detect_unsubscribe, run_reply_triage
 from .workflows.research import run_research
@@ -44,6 +44,9 @@ def _wire(s: Settings, repo: Any, new_log: NewLog | None) -> tuple[Any, NewLog]:
     if repo is None:
         client = get_client(s)
         return Repo(client), new_log or (lambda: SupabaseRunLog(client))
+    if new_log is None and isinstance(repo, Repo):
+        # 실제 DB를 쓰면 실행 로그도 DB에 남긴다 (메모리 로그의 가짜 run_id가 DB에 들어가지 않게)
+        return repo, (lambda: SupabaseRunLog(repo.c))
     return repo, new_log or MemoryRunLog
 
 
@@ -401,10 +404,11 @@ def create_call_task(
             llm = get_llm(provider, s)
         except RuntimeError:
             llm = None
-    result = run_call_script(lead, repo.list_facts(lead["id"]), repo.latest_score(lead["id"]), msg, llm,
-                             new_log() if llm else None, booking_url=s.booking_url, trigger=trigger)
     sent_at = _parse_ts(msg.get("sent_at") or datetime.now(timezone.utc))
     due = call_due_at(sent_at, s.call_delay_minutes, s.call_hours_kst)
+    result = run_call_script(lead, repo.list_facts(lead["id"]), repo.latest_score(lead["id"]), msg, llm,
+                             new_log() if llm else None, booking_url=s.booking_url, trigger=trigger,
+                             when_sent=sent_phrase(sent_at, due))
     task = repo.insert_call_task({"lead_id": lead["id"], "message_id": message_id, "run_id": result["run_id"],
                                   "script": result["script"], "due_at": due.isoformat()})
     text = render_call_script(result["script"], lead, due.strftime("%Y-%m-%d %H:%M KST"))

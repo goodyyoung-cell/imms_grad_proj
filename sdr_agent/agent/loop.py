@@ -19,6 +19,11 @@ from .runlog import RunLog, Step
 from .tools import ToolRegistry
 
 
+# 실행 로그에 '어떤 도구를 왜 골랐는지'를 남기기 위해 모든 에이전트에 붙이는 규칙
+REASON_RULE = ("\n\n실행 기록 규칙: 도구를 호출할 때는 호출 직전에, 왜 이 도구를 고르는지(무엇을 확인하려는지) "
+               "한 문장으로 먼저 쓰세요. 이 문장은 평가용 실행 로그에 남습니다.")
+
+
 @dataclass
 class AgentResult:
     status: str  # succeeded | stopped | failed
@@ -47,8 +52,10 @@ def run_agent(
     trigger: str = "manual",
     lead_id: str | None = None,
     max_steps: int = 8,
+    max_tokens: int = 8000,
 ) -> AgentResult:
     log.start(workflow=workflow, trigger=trigger, model=f"{llm.provider}:{llm.model}", lead_id=lead_id)
+    system = system + REASON_RULE
     messages: list[Message] = [Message(role="user", text=goal)]
     step_no = 0
     last_text = ""
@@ -56,7 +63,7 @@ def run_agent(
     try:
         for _ in range(max_steps):
             t0 = time.monotonic()
-            resp = llm.chat(system, messages, tools.specs())
+            resp = llm.chat(system, messages, tools.specs(), max_tokens=max_tokens)
             step_no += 1
             last_text = resp.text or last_text
             log.step(Step(
@@ -80,7 +87,11 @@ def run_agent(
             for call in resp.tool_calls:
                 tool = tools.get(call.name)
                 t1 = time.monotonic()
-                if tool is None:
+                if resp.truncated:
+                    # 잘린 응답의 도구 입력은 불완전하다. 실행하지 않고 이유를 정확히 알려 준다
+                    output, is_error = {"error": "응답이 최대 길이에서 잘려 이 호출의 입력이 불완전합니다. "
+                                                 "내용을 더 짧게 줄여서 다시 호출하세요."}, True
+                elif tool is None:
                     output, is_error = {"error": f"없는 도구입니다: {call.name}. 사용 가능: {tools.names()}"}, True
                 else:
                     try:

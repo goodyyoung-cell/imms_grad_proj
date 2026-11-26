@@ -19,6 +19,19 @@ BASE = "https://opendart.fss.or.kr/api"
 TIMEOUT = 30
 
 
+def won_text(eok: float | None) -> str | None:
+    """억 원 단위 금액을 읽기 쉬운 한국어로. 49658 → '4조 9,658억 원'"""
+    if eok is None:
+        return None
+    sign, eok = ("-" if eok < 0 else ""), abs(eok)
+    jo, rest = int(eok // 10000), round(eok % 10000)
+    if rest == 10000:
+        jo, rest = jo + 1, 0
+    if jo and rest:
+        return f"{sign}{jo}조 {rest:,}억 원"
+    return f"{sign}{jo}조 원" if jo else f"{sign}{rest:,}억 원"
+
+
 def _norm(name: str) -> str:
     n = name.replace("(주)", "").replace("㈜", "").replace("주식회사", "")
     return "".join(n.split()).lower()
@@ -100,6 +113,9 @@ class DartClient:
         return {
             "year": year,
             "revenue_100m_krw": round(revenue, 1) if revenue is not None else None,
+            "revenue_text": won_text(revenue),
+            "operating_income_text": won_text(op_income),
             "operating_margin_pct": margin,
+            "unit_note": "revenue_100m_krw는 억 원 단위입니다 (1 = 1억 원). 사실로 쓸 때는 revenue_text 표기를 그대로 쓰세요.",
             "source_url": f"{BASE}/fnlttSinglAcnt.json?corp_code={corp_code}&bsns_year={year}&reprt_code=11011",
         }

@@ -460,3 +460,25 @@ def test_call_outcome_api_passes_capture_fields(monkeypatch):
     assert c.post("/admin/calls/T1/outcome", json=body, headers=h).status_code == 200
     assert seen["email_received"] is True and seen["compelling_reason"] == "성수기 전 지연 해소"
     assert c.post("/admin/calls/T1/outcome", json={**body, "outcome": "maybe"}, headers=h).status_code == 400
+
+
+def test_real_repo_without_log_factory_writes_run_logs_to_db():
+    from sdr_agent.agent import SupabaseRunLog
+    from sdr_agent.config import load_settings
+    from sdr_agent.db import Repo
+
+    repo, new_log = jobs._wire(load_settings(), Repo(client=object()), None)
+    assert isinstance(new_log(), SupabaseRunLog)  # 메모리 로그의 가짜 run_id가 DB에 들어가지 않게
+
+
+@pytest.mark.parametrize("sent,call_at,phrase", [
+    (_dt(2026, 11, 26, 14, 0, tzinfo=KST), _dt(2026, 11, 26, 15, 0, tzinfo=KST), "조금 전에"),
+    (_dt(2026, 11, 26, 21, 0, tzinfo=KST), _dt(2026, 11, 27, 9, 0, tzinfo=KST), "어제"),
+    (_dt(2026, 11, 27, 20, 0, tzinfo=KST), _dt(2026, 11, 30, 9, 0, tzinfo=KST), "11월 27일에"),
+])
+def test_sent_phrase_matches_call_time(sent, call_at, phrase):
+    from sdr_agent.workflows.call_script import assemble, sent_phrase
+
+    assert sent_phrase(sent, call_at) == phrase
+    s = assemble(LEAD, {"subject": "제목"}, {}, None, phrase)
+    assert s["opening"].count(f"{phrase} '제목'") == 1 and f"{phrase} 노바데스크" in s["voicemail"]
