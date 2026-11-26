@@ -44,6 +44,7 @@ Claude와의 대화는 팀원끼리 공유되지 않습니다. 대화나 회의�
 ### 2026-11-25: 리서치 출처를 홈페이지·DART·네이버 뉴스·Google 뉴스로 확장
 - 결정: 리서치 에이전트가 네 출처 중 무엇을 볼지 스스로 고른다. 홈페이지는 사업·제품·고객, DART는 재무·공시, 뉴스는 최근 소식과 대화 소재.
   - 네이버 뉴스: 공식 검색 API(`NAVER_CLIENT_ID/SECRET`). 키가 없으면 도구가 오류를 돌려주고 에이전트가 Google로 넘어간다.
+    - **2026-11-26 갱신**: 검색 API 신청이 2026년 여름부터 네이버 클라우드 플랫폼 **NAVER API HUB**로 옮겨졌다. 주소 `naverapihub.apigw.ntruss.com/search/v1/news`, 헤더 `X-NCP-APIGW-API-KEY-ID/KEY`. 응답 형식은 같다. 예전 개발자센터 키는 쓸 수 없어 새로 발급한다. 예전 방식은 `NAVER_SEARCH_API=legacy`로 남겨 둔다. 한시적 무료, 일 25,000회 (https://api.ncloud-docs.com/docs/naver-api-hub-search-news).
   - Google 뉴스: 공개 RSS, 키 불필요. 최근 1년 기사만.
   - 기사는 제목·요약만 받는다. 검색 결과로 받은 기사 url만 출처로 인정한다 (기존 출처 규칙 그대로).
   - 홈페이지: 리드 도메인으로 https → www 순으로 시도. 자바스크립트·meta refresh로 넘기는 첫 화면은 한 번 따라가고, 오래된 TLS 사이트는 보안 수준을 낮춰 다시 읽는다(공개 페이지 읽기 전용).

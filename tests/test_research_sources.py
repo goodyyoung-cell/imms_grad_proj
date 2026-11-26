@@ -24,7 +24,8 @@ def mock_http(handler):
 
 def test_naver_parses_strips_tags_and_drops_old_articles():
     def handler(req):
-        assert req.headers["X-Naver-Client-Id"] == "id"
+        assert str(req.url).startswith("https://naverapihub.apigw.ntruss.com/search/v1/news")
+        assert req.headers["X-NCP-APIGW-API-KEY-ID"] == "id" and req.headers["X-NCP-APIGW-API-KEY"] == "secret"
         return httpx.Response(200, json={"items": [
             {"title": "<b>예시SaaS</b>, AI 상담 도입", "description": "고객센터에 &quot;AI&quot; 적용",
              "originallink": "https://news.example/a1", "link": "https://n.news.naver.com/a1", "pubDate": RECENT},
@@ -115,3 +116,20 @@ def test_agent_uses_news_and_can_cite_article_urls():
     # 네이버 키가 없다는 사실이 LLM에게 전달됐다 (Google로 보완할 근거)
     naver_result = llm.seen[1][-1].tool_results[1]
     assert naver_result.name == "naver_news_search" and "키 없음" in naver_result.content["error"]
+
+
+def test_naver_legacy_mode_and_hub_error_message():
+    def legacy(req):
+        assert "openapi.naver.com" in str(req.url) and req.headers["X-Naver-Client-Id"] == "id"
+        return httpx.Response(200, json={"items": []})
+
+    assert NaverNewsClient("id", "secret", http=mock_http(legacy), api="legacy").search("x") == []
+
+    def hub_error(req):
+        return httpx.Response(401, json={"error": {"errorCode": "200", "message": "Authentication Failed"}})
+
+    try:
+        NaverNewsClient("id", "bad", http=mock_http(hub_error)).search("x")
+        raise AssertionError("오류가 나야 합니다")
+    except RuntimeError as exc:
+        assert "HTTP 401" in str(exc) and "Authentication Failed" in str(exc)

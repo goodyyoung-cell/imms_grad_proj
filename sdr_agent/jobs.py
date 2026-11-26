@@ -88,7 +88,7 @@ def research_leads(
         return []  # 처리할 리드가 없으면 LLM 키 없이도 정상 종료 (첫 배포 점검용)
     llm = llm or get_llm(provider, s)
     dart = DartClient(s.dart_api_key) if s.dart_api_key else None
-    naver = (NaverNewsClient(s.naver_client_id, s.naver_client_secret)
+    naver = (NaverNewsClient(s.naver_client_id, s.naver_client_secret, api=s.naver_search_api)
              if s.naver_client_id and s.naver_client_secret else None)
     google = GoogleNewsClient() if s.google_news_enabled else None
 

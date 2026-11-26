@@ -54,16 +54,38 @@ def _recent(items: list[dict], max_age_days: int, now: datetime | None = None) -
 
 
 class NaverNewsClient:
-    URL = "https://openapi.naver.com/v1/search/news.json"
+    """네이버 뉴스 검색.
+
+    2026년 여름부터 검색 API 신청은 네이버 클라우드 플랫폼의 NAVER API HUB로 옮겨졌다 (기본값 hub).
+    주소와 인증 헤더만 다르고 응답 형식(items[].title, originallink, link, description, pubDate)은 같다.
+    예전 개발자센터 키는 API HUB에서 쓸 수 없다. 예전 키로 호출하려면 api="legacy".
+      https://api.ncloud-docs.com/docs/naver-api-hub-search-news
+    """
+
+    ENDPOINTS = {
+        "hub": ("https://naverapihub.apigw.ntruss.com/search/v1/news", "X-NCP-APIGW-API-KEY-ID", "X-NCP-APIGW-API-KEY"),
+        "legacy": ("https://openapi.naver.com/v1/search/news.json", "X-Naver-Client-Id", "X-Naver-Client-Secret"),
+    }
     provider = "naver"
 
-    def __init__(self, client_id: str, client_secret: str, http: httpx.Client | None = None):
+    def __init__(self, client_id: str, client_secret: str, http: httpx.Client | None = None, api: str = "hub"):
+        if api not in self.ENDPOINTS:
+            raise ValueError(f"api는 {list(self.ENDPOINTS)} 중 하나입니다")
         self.http = http or httpx.Client(timeout=TIMEOUT)
-        self.headers = {"X-Naver-Client-Id": client_id, "X-Naver-Client-Secret": client_secret}
+        self.url, id_header, secret_header = self.ENDPOINTS[api]
+        self.headers = {id_header: client_id, secret_header: client_secret}
 
     def search(self, query: str, max_age_days: int = MAX_AGE_DAYS) -> list[dict[str, Any]]:
-        resp = self.http.get(self.URL, params={"query": query, "display": 20, "sort": "date"}, headers=self.headers)
-        resp.raise_for_status()
+        resp = self.http.get(self.url, params={"query": query, "display": 20, "sort": "date"}, headers=self.headers)
+        if resp.status_code >= 400:
+            # API HUB 오류: {"errorCode","errorMessage"} 또는 {"error":{"errorCode","message"}}
+            try:
+                body = resp.json()
+                err = body.get("error", body)
+                detail = f"{err.get('errorCode', '')} {err.get('errorMessage') or err.get('message') or ''}".strip()
+            except ValueError:
+                detail = resp.text[:200]
+            raise RuntimeError(f"네이버 뉴스 검색 실패 (HTTP {resp.status_code}): {detail}")
         items = []
         for it in resp.json().get("items", []):
             url = it.get("originallink") or it.get("link")

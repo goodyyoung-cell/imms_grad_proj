@@ -31,6 +31,7 @@ class Settings:
     handoff_to: str | None = None       # 인계 자료를 받을 담당자 (이름 또는 주소)
     naver_client_id: str | None = None  # 네이버 검색 API (뉴스)
     naver_client_secret: str | None = None
+    naver_search_api: str = "hub"       # hub: 네이버 클라우드 NAVER API HUB (기본), legacy: 예전 개발자센터 키
     google_news_enabled: bool = True    # Google 뉴스 RSS (키 불필요)
     call_delay_minutes: int = 60        # 첫 메일 발송 후 최소 몇 분 뒤 전화할지
     call_hours_kst: tuple[int, int] = (9, 18)  # 전화해도 되는 시간대 (평일, 한국 시간, 시작 이상 끝 미만)
@@ -50,6 +51,7 @@ def load_settings() -> Settings:
         agent_max_steps=int(_get("AGENT_MAX_STEPS", "12")),
         naver_client_id=_get("NAVER_CLIENT_ID"),
         naver_client_secret=_get("NAVER_CLIENT_SECRET"),
+        naver_search_api=_get("NAVER_SEARCH_API", "hub"),
         google_news_enabled=_get("GOOGLE_NEWS_ENABLED", "true").lower() not in ("0", "false", "no"),
         call_delay_minutes=int(_get("CALL_DELAY_MINUTES", "60")),
         call_hours_kst=tuple(int(h) for h in _get("CALL_HOURS_KST", "9-18").split("-", 1)),
