@@ -61,7 +61,7 @@ uvicorn sdr_agent.app:app --reload                      # 웹 서버 (http://loc
 
 **현재 상태 (2026-11-22)**: GCP 프로젝트 `gen-lang-client-0136144273`, 리전 `asia-northeast3`(서울), 결제 계정 연결 완료. 팀원은 IAM에서 이 프로젝트에 초대받아 쓴다.
 
-**현재 상태 (2026-11-26)**: 최신 코드 배포 완료 (리비전 `sdr-agent-00004`). Anthropic·Gemini·DART·네이버(API HUB) 키를 Secret Manager로 연결했다 (`scripts/sync_secrets.sh`). Cloud Run에서 실제 리서치 1건 성공. 예약 실행 2개 등록 (`scripts/setup_scheduler.sh`): 평일 07:30 리서치 5건, 08:00 초안 최대 10건. Gemini는 AI Studio 선불 크레딧 소진(402)으로 아직 호출 불가, `GEMINI_MODEL` 미정.
+**현재 상태 (2026-11-26)**: 최신 코드 배포 완료 (리비전 `sdr-agent-00004`). Anthropic·Gemini·DART·네이버(API HUB) 키를 Secret Manager로 연결했다 (`scripts/sync_secrets.sh`). Cloud Run에서 실제 리서치 1건 성공. 예약 실행 2개 등록 (`scripts/setup_scheduler.sh`): 평일 07:30 리서치 5건, 08:00 초안 최대 10건. Gemini는 크레딧 충전 후 `GEMINI_MODEL=gemini-3.8-flash`로 설정 (리비전 `sdr-agent-00005`). `gemini-2.5-flash`는 신규 사용자에게 제공 종료(404).
 
 ### 첫 배포 (LLM 키 없이 DB 연결까지만 확인)
 
