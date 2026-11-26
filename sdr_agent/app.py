@@ -194,6 +194,34 @@ class Decision(BaseModel):
     note: str | None = None
 
 
+@app.get("/admin/calls", dependencies=auth)
+def admin_calls(due_only: bool = True) -> dict:
+    """걸어야 할 전화 목록 (due_only=false면 대기 중인 전화 전체)."""
+    if due_only:
+        return {"calls": jobs.due_calls()}
+    return {"calls": Repo(get_client()).list_call_tasks(status="pending")}
+
+
+class CallOutcome(BaseModel):
+    outcome: str  # interested | not_now | needs_info | no_answer | voicemail | wrong_contact | unsubscribe
+    called_by: str
+    notes: str | None = None
+    email_received: bool | None = None      # 메일을 받았다고 했는지
+    meeting_preference: str | None = None   # 희망 미팅 시기
+    compelling_reason: str | None = None    # 왜 지금 바꿔야 하는지, 들은 내용
+
+
+@app.post("/admin/calls/{task_id}/outcome", dependencies=auth)
+def admin_call_outcome(task_id: str, c: CallOutcome) -> dict:
+    try:
+        return jobs.record_call_outcome(task_id, c.outcome, c.called_by, notes=c.notes, email_received=c.email_received,
+                                        meeting_preference=c.meeting_preference, compelling_reason=c.compelling_reason)
+    except LookupError as exc:
+        raise HTTPException(404, str(exc))
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+
+
 @app.post("/admin/messages/{message_id}/decision", dependencies=auth)
 def admin_decide(message_id: str, d: Decision) -> dict:
     try:

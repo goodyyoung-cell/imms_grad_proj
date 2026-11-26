@@ -32,6 +32,8 @@ class Settings:
     naver_client_id: str | None = None  # 네이버 검색 API (뉴스)
     naver_client_secret: str | None = None
     google_news_enabled: bool = True    # Google 뉴스 RSS (키 불필요)
+    call_delay_minutes: int = 60        # 첫 메일 발송 후 최소 몇 분 뒤 전화할지
+    call_hours_kst: tuple[int, int] = (9, 18)  # 전화해도 되는 시간대 (평일, 한국 시간, 시작 이상 끝 미만)
 
 
 def load_settings() -> Settings:
@@ -49,6 +51,8 @@ def load_settings() -> Settings:
         naver_client_id=_get("NAVER_CLIENT_ID"),
         naver_client_secret=_get("NAVER_CLIENT_SECRET"),
         google_news_enabled=_get("GOOGLE_NEWS_ENABLED", "true").lower() not in ("0", "false", "no"),
+        call_delay_minutes=int(_get("CALL_DELAY_MINUTES", "60")),
+        call_hours_kst=tuple(int(h) for h in _get("CALL_HOURS_KST", "9-18").split("-", 1)),
         booking_url=_get("BOOKING_URL"),
         handoff_to=_get("HANDOFF_TO"),
     )

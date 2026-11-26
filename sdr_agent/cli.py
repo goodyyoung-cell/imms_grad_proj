@@ -8,6 +8,9 @@
   python -m sdr_agent.cli pending                               # 승인 대기 메시지 보기
   python -m sdr_agent.cli approve <message_id> --by 홍길동       # 승인 → 샌드박스 발송
   python -m sdr_agent.cli reject <message_id> --by 홍길동 --note "톤이 과함"
+  python -m sdr_agent.cli calls                                 # 오늘 걸어야 할 전화와 콜 스크립트
+  python -m sdr_agent.cli call-outcome <task_id> interested --by 홍길동 --received yes \
+      --meeting "다음 주 화요일 오후" --reason "12월 성수기 전 응답 지연 해소"   # 통화 결과 기록
   python -m sdr_agent.cli reply --from a@b.example "다음 주에 미팅 가능합니다"   # 모의 답장
   python -m sdr_agent.cli handoff <lead_id>                     # 인계 요약
   python -m sdr_agent.cli kb "가격 플랜"                         # 지식베이스 검색 확인 (DB·키 불필요)
@@ -99,6 +102,19 @@ def main() -> None:
         a.add_argument("--note")
         a.add_argument("--edited-body-file", type=Path, help="수정해서 승인할 본문 파일 (approve만)")
 
+    cl = sub.add_parser("calls", help="걸어야 할 전화와 콜 스크립트 보기")
+    cl.add_argument("--all", action="store_true", help="예정 시각이 안 된 것까지")
+
+    co = sub.add_parser("call-outcome", help="통화 결과 기록")
+    co.add_argument("task_id")
+    co.add_argument("outcome", choices=["interested", "not_now", "needs_info", "no_answer", "voicemail",
+                                        "wrong_contact", "unsubscribe"])
+    co.add_argument("--by", required=True, help="통화한 사람")
+    co.add_argument("--notes")
+    co.add_argument("--received", choices=["yes", "no"], help="메일을 받았다고 했는지")
+    co.add_argument("--meeting", help="희망 미팅 시기 (예: 다음 주 화요일 오후)")
+    co.add_argument("--reason", dest="compelling_reason", help="Compelling Reason (왜 지금 바꿔야 하는지)")
+
     rp = sub.add_parser("reply", help="모의 답장 넣기")
     rp.add_argument("body")
     g = rp.add_mutually_exclusive_group(required=True)
@@ -142,6 +158,20 @@ def main() -> None:
         edited = args.edited_body_file.read_text(encoding="utf-8") if getattr(args, "edited_body_file", None) else None
         decision = "rejected" if args.cmd == "reject" else ("edited" if edited else "approved")
         _print(jobs.decide_message(args.message_id, decision, args.by, channel="cli", edited_body=edited, note=args.note))
+    elif args.cmd == "calls":
+        from .db import Repo, get_client
+        from .workflows.call_script import render_text as render_call
+
+        repo = Repo(get_client())
+        tasks = repo.list_call_tasks(status="pending") if args.all else jobs.due_calls(repo=repo)
+        for t in tasks:
+            print(f"\n=== {t['id']} (예정 {t['due_at']})\n{render_call(t['script'], repo.get_lead(t['lead_id']))}")
+        if not tasks:
+            print("걸어야 할 전화가 없습니다." + ("" if args.all else " (--all 로 예정된 것까지 보기)"))
+    elif args.cmd == "call-outcome":
+        received = {"yes": True, "no": False}.get(args.received) if args.received else None
+        _print(jobs.record_call_outcome(args.task_id, args.outcome, args.by, notes=args.notes, email_received=received,
+                                        meeting_preference=args.meeting, compelling_reason=args.compelling_reason))
     elif args.cmd == "reply":
         _print(jobs.handle_reply(args.body, from_email=args.from_email, lead_id=args.lead_id, provider=args.provider))
     elif args.cmd == "handoff":

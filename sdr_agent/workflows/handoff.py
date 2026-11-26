@@ -34,21 +34,40 @@ AI가 처리한 리드를 인간 SDR에게 넘기며, 담당자가 바로 상담
 - 주어진 기록(리서치 사실, 메일, 답장)에 있는 내용만 근거로 씁니다. 추측은 "추정"이라고 표시합니다.
 - interests: 고객이 관심을 보인 주제 (답장·문의 메모 근거). 없으면 빈 목록.
 - recommended_actions: 담당자가 다음에 할 일 2~4개, 구체적으로.
+- call_insights(전화 팔로업 기록)가 있으면 희망 미팅 시기와 Compelling Reason을 관심사·권장 조치에 반영합니다.
 - screening_questions: purpose(도입 목적), environment(사용 환경), decision(의사결정 구조), timing(도입 시점) 네 가지 각각에 대해
   이 고객 상황에 맞춘 질문 하나씩. 이미 답장에서 확인된 항목은 그 내용을 확인하는 질문으로 씁니다.
 - 마지막에 submit_handoff를 호출합니다."""
 
 
-def contact_history(messages: list[dict], replies: list[dict]) -> list[dict]:
+CALL_OUTCOME_LABELS = {"interested": "관심", "not_now": "나중에", "needs_info": "자료 요청", "no_answer": "부재",
+                       "voicemail": "음성 메시지 남김", "wrong_contact": "담당자 아님", "unsubscribe": "연락 거부"}
+
+
+def contact_history(messages: list[dict], replies: list[dict], calls: list[dict] | None = None) -> list[dict]:
     events = [{"at": m.get("sent_at") or m.get("created_at"), "type": f"메일({m.get('kind')})",
                "status": m.get("status"), "subject": m.get("subject")} for m in messages]
     events += [{"at": r.get("received_at"), "type": "답장", "classification": r.get("classification"),
                 "excerpt": (r.get("body") or "")[:200]} for r in replies]
+    events += [{"at": c.get("called_at"), "type": "전화", "outcome": CALL_OUTCOME_LABELS.get(c.get("outcome"), c.get("outcome")),
+                "excerpt": (c.get("outcome_notes") or "")[:200]} for c in calls or [] if c.get("status") == "done"]
     return sorted(events, key=lambda e: str(e.get("at") or ""))
 
 
+def call_insights(calls: list[dict] | None) -> list[dict]:
+    """전화 팔로업에서 SDR이 들은 내용 (메일 수신, 희망 미팅 시기, Compelling Reason)."""
+    out = []
+    for c in calls or []:
+        if c.get("status") != "done":
+            continue
+        item = {k: c.get(k) for k in ("called_at", "called_by", "email_received", "meeting_preference", "compelling_reason")}
+        item["outcome"] = CALL_OUTCOME_LABELS.get(c.get("outcome"), c.get("outcome"))
+        out.append(item)
+    return out
+
+
 def base_summary(lead: dict, facts: list[dict], score: dict | None,
-                 messages: list[dict], replies: list[dict], reason: str) -> dict[str, Any]:
+                 messages: list[dict], replies: list[dict], reason: str, calls: list[dict] | None = None) -> dict[str, Any]:
     return {
         "lead": {k: lead.get(k) for k in ("id", "name", "company_name", "title", "email", "source", "inbound_at")},
         "handoff_reason": reason,
@@ -56,7 +75,8 @@ def base_summary(lead: dict, facts: list[dict], score: dict | None,
         "selection": {"score": (score or {}).get("score"), "tags": (score or {}).get("tags", []),
                       "breakdown": (score or {}).get("breakdown", {}),
                       "note": "점수는 규칙 기반이며, 영업기회 등록 여부는 담당자가 결정합니다."},
-        "contact_history": contact_history(messages, replies),
+        "contact_history": contact_history(messages, replies, calls),
+        "call_insights": call_insights(calls),
         "interests": [],
         "recommended_actions": ["답장 내용을 확인하고 스크리닝 미팅 일정을 잡는다."],
     }
@@ -80,8 +100,9 @@ def run_handoff(
     reason: str = "고객 관심 표명",
     trigger: str = "manual",
     max_steps: int = 3,
+    calls: list[dict] | None = None,
 ) -> dict[str, Any]:
-    summary = base_summary(lead, facts, score, messages, replies, reason)
+    summary = base_summary(lead, facts, score, messages, replies, reason, calls)
     if llm is None or log is None:
         return {"run_id": None, "summary": summary, "screening_questions": _questions(None), "by": "rule"}
 
@@ -99,7 +120,7 @@ def run_handoff(
                 "required": list(SCREENING_TOPICS)},
         }, "required": ["interests", "recommended_actions", "screening_questions"]},
         submit_handoff, terminal=True)])
-    record = {k: summary[k] for k in ("lead", "handoff_reason", "research", "selection", "contact_history")}
+    record = {k: summary[k] for k in ("lead", "handoff_reason", "research", "selection", "contact_history", "call_insights")}
     record["lead_notes"] = lead.get("notes")
     goal = f"다음 리드를 인간 SDR에게 인계합니다. 기록:\n{json.dumps(record, ensure_ascii=False, default=str)}"
     result = run_agent(llm, SYSTEM, goal, registry, log, workflow="handoff", trigger=trigger,
@@ -122,8 +143,13 @@ def render_text(summary: dict, questions: list[dict]) -> str:
              "", "■ 리서치"]
     lines += [f"- {f['field']}: {f['value']} ({f['source_url']})" for f in summary["research"]] or ["- (출처 있는 사실 없음)"]
     lines += ["", "■ 접촉 이력"]
-    lines += [f"- {e.get('at')} {e['type']} {e.get('subject') or e.get('classification') or ''}".rstrip()
+    lines += [f"- {e.get('at')} {e['type']} {e.get('subject') or e.get('classification') or e.get('outcome') or ''}".rstrip()
               for e in summary["contact_history"]] or ["- (없음)"]
+    for ci in summary.get("call_insights", []):
+        received = {True: "받음", False: "못 받음"}.get(ci.get("email_received"), "확인 안 함")
+        lines += ["", f"■ 전화 팔로업 ({ci.get('called_at') or ''} · {ci.get('outcome')})",
+                  f"- 메일 수신: {received}", f"- 희망 미팅 시기: {ci.get('meeting_preference') or '-'}",
+                  f"- Compelling Reason: {ci.get('compelling_reason') or '-'}"]
     lines += ["", "■ 관심사"] + ([f"- {i}" for i in summary["interests"]] or ["- (확인된 관심사 없음)"])
     lines += ["", "■ 권장 후속 조치"] + [f"- {a}" for a in summary["recommended_actions"]]
     lines += ["", "■ 스크리닝에서 확인할 질문"] + [f"- {q['label']}: {q['question']}" for q in questions]

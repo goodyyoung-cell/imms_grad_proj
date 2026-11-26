@@ -33,7 +33,9 @@ python -m sdr_agent.cli import-leads --google-sheet "https://docs.google.com/...
 python -m sdr_agent.cli research --limit 3              # 상태가 new인 리드 3건 조사
 python -m sdr_agent.cli draft --limit 3                 # 조사 끝난 리드에 첫 메일 초안 (승인 대기)
 python -m sdr_agent.cli pending                         # 승인 대기 메시지 보기
-python -m sdr_agent.cli approve <message_id> --by 이름   # 승인 → 샌드박스 발송
+python -m sdr_agent.cli approve <message_id> --by 이름   # 승인 → 샌드박스 발송 → 1시간 뒤 전화 과제
+python -m sdr_agent.cli calls                           # 지금 걸어야 할 전화와 콜 스크립트
+python -m sdr_agent.cli call-outcome <task_id> interested --by 이름 --received yes --meeting "다음 주 화요일" --reason "성수기 전 지연 해소"
 python -m sdr_agent.cli reply --from <리드 이메일> "다음 주 미팅 가능합니다"   # 모의 답장 → 분류·인계
 python -m sdr_agent.cli eval-replies                    # 모의 답장 24건 분류 정확도
 uvicorn sdr_agent.app:app --reload                      # 웹 서버 (http://localhost:8000/health)
@@ -50,6 +52,8 @@ uvicorn sdr_agent.app:app --reload                      # 웹 서버 (http://loc
 | `POST /jobs/draft` | researched 리드에 첫 메일 초안 |
 | `GET /admin/messages` | 승인 대기 메시지 목록 |
 | `POST /admin/messages/{id}/decision` | `{"decision": "approved"\|"rejected"\|"edited", "decided_by": "..."}` 승인하면 바로 샌드박스 발송 |
+| `GET /admin/calls` | 지금까지 걸어야 할 전화와 콜 스크립트 (`due_only=false`면 대기 중 전체) |
+| `POST /admin/calls/{id}/outcome` | 통화 결과 `{"outcome", "called_by", "email_received", "meeting_preference", "compelling_reason", "notes"}` |
 | `POST /webhooks/reply` | 답장 도착 `{"from_email": "...", "body": "..."}` |
 | `POST /jobs/handoff` | `{"lead_id": "..."}` 인계 요약 |
 

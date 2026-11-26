@@ -35,6 +35,7 @@ class FakeRepo:
     def __init__(self, leads):
         self.leads = {l["id"]: dict(l) for l in leads}
         self.messages, self.approvals, self.replies, self.handoffs = {}, [], [], []
+        self.calls = {}
         self.facts = {"L1": FACTS}
         self.scores = {"L1": SCORE}
         self._ids = itertools.count(1)
@@ -59,6 +60,25 @@ class FakeRepo:
         for m in self.messages.values():
             if m["lead_id"] == lead_id and m["status"] in ("pending_approval", "approved"):
                 m["status"] = "cancelled"
+        for t in self.calls.values():
+            if t["lead_id"] == lead_id and t["status"] == "pending":
+                t["status"] = "cancelled"
+
+    def insert_call_task(self, row):
+        t = {"id": self._id("C"), "status": "pending", "outcome": None, "called_at": None, **row}
+        self.calls[t["id"]] = t
+        return dict(t)
+
+    def get_call_task(self, task_id):
+        return dict(self.calls[task_id])
+
+    def list_call_tasks(self, lead_id=None, status=None, due_before=None, limit=100):
+        return [dict(t) for t in self.calls.values() if (lead_id is None or t["lead_id"] == lead_id)
+                and (status is None or t["status"] == status) and (due_before is None or t["due_at"] <= due_before)]
+
+    def update_call_task(self, task_id, fields):
+        self.calls[task_id].update(fields)
+        return dict(self.calls[task_id])
 
     def list_facts(self, lead_id):
         return self.facts.get(lead_id, [])
@@ -280,3 +300,163 @@ def test_handoff_without_llm_uses_records_and_default_questions():
     assert out["by"] == "rule"
     assert len(out["screening_questions"]) == 4
     assert out["summary"]["selection"]["score"] == 62
+
+
+# --- 전화 팔로업 ---
+
+from datetime import datetime as _dt  # noqa: E402
+
+from sdr_agent.workflows.call_script import (COMPLIANCE, DEFAULT_CR_QUESTIONS,  # noqa: E402
+                                             render_text as render_call, run_call_script)
+from sdr_agent.jobs import KST, call_due_at  # noqa: E402
+
+
+def _approve_first_mail(repo):
+    [r] = jobs.draft_emails(repo=repo, llm=good_draft_llm())
+    out = jobs.decide_message(r["message_id"], "approved", "담당자A", repo=repo, sender=SandboxSender())
+    return r["message_id"], out
+
+
+def test_first_mail_sent_creates_call_task_with_default_script(repo):
+    message_id, out = _approve_first_mail(repo)
+    ct = out["call_task"]
+    assert ct["status"] == "pending" and ct["by"] == "rule"  # 키가 없으면 기본 스크립트
+    [task] = repo.calls.values()
+    s = task["script"]
+    assert task["message_id"] == message_id
+    assert s["compliance"] == COMPLIANCE
+    assert "잘 받아 보셨을까요" in s["opening"] and "한빛몰 성수기 문의 응대 관련" in s["opening"]  # 1. 수신 확인
+    assert "미팅은 언제쯤" in s["meeting_ask"]                                                    # 2. 미팅 희망 시기
+    assert s["compelling_questions"] == DEFAULT_CR_QUESTIONS                                      # 3. Compelling Reason
+    assert all(o["kb_ids"][0].startswith("04_objections") for o in s["objections"])
+    text = render_call(s, LEAD)
+    for heading in ("1. 메일 수신 확인", "2. 미팅 희망 시기", "3. Compelling Reason 찾기", "들을 신호", "부재 시 음성 메시지"):
+        assert heading in text
+
+
+def test_followup_answer_does_not_create_call_task(repo):
+    repo.messages["MX"] = {"id": "MX", "lead_id": "L1", "kind": "followup", "status": "pending_approval",
+                           "subject": "답변", "body": "본문", "citations": [], "created_at": NOW, "sent_at": None}
+    out = jobs.decide_message("MX", "approved", "담당자A", repo=repo, sender=SandboxSender())
+    assert "call_task" not in out and repo.calls == {}
+
+
+@pytest.mark.parametrize("sent,expected", [
+    (_dt(2026, 11, 26, 14, 20, tzinfo=KST), _dt(2026, 11, 26, 15, 20, tzinfo=KST)),  # 목 오후 → 1시간 뒤
+    (_dt(2026, 11, 26, 17, 30, tzinfo=KST), _dt(2026, 11, 27, 9, 0, tzinfo=KST)),    # 18시 넘어감 → 다음 날 9시
+    (_dt(2026, 11, 26, 7, 0, tzinfo=KST), _dt(2026, 11, 26, 9, 0, tzinfo=KST)),      # 이른 아침 → 같은 날 9시
+    (_dt(2026, 11, 27, 17, 10, tzinfo=KST), _dt(2026, 11, 30, 9, 0, tzinfo=KST)),    # 금요일 저녁 → 월요일 9시
+    (_dt(2026, 11, 28, 11, 0, tzinfo=KST), _dt(2026, 11, 30, 9, 0, tzinfo=KST)),     # 토요일 → 월요일 9시
+    (_dt(2026, 11, 26, 5, 20, tzinfo=timezone.utc), _dt(2026, 11, 26, 15, 20, tzinfo=KST)),  # UTC 입력도 한국 시간 기준
+])
+def test_call_due_at_one_hour_within_business_hours(sent, expected):
+    assert call_due_at(sent, 60, (9, 18)) == expected
+
+
+def test_reply_keeps_call_and_adds_notice(repo):
+    _approve_first_mail(repo)
+    llm = ScriptedLLM([LLMResponse("", [call("submit_triage", classification="not_now", confidence=0.9, reason="내년")])])
+    out = jobs.handle_reply("내년에 다시 연락 주세요", lead_id="L1", repo=repo, llm=llm)
+    [task] = repo.calls.values()
+    assert out["calls_noticed"] == 1 and task["status"] == "pending"  # 전화는 사람이 거니 취소하지 않는다
+    assert "답장" in task["script"]["notices"][0]["text"] and "not_now" in task["script"]["notices"][0]["text"]
+    assert "통화 전 확인" in render_call(task["script"], LEAD)
+
+
+def test_unsubscribe_reply_still_cancels_call(repo):
+    _approve_first_mail(repo)
+    jobs.handle_reply("수신 거부합니다", lead_id="L1", repo=repo)
+    assert [t["status"] for t in repo.calls.values()] == ["cancelled"]  # 연락 중단은 예외 (DB 트리거)
+
+
+def test_handoff_keeps_call_and_adds_notice(repo):
+    _approve_first_mail(repo)
+    jobs.handoff_lead("L1", reason="담당자 요청", repo=repo, use_llm=False)
+    [task] = repo.calls.values()
+    assert task["status"] == "pending" and task["script"]["notices"][0]["kind"] == "handoff"
+
+
+@pytest.mark.parametrize("outcome,status", [("voicemail", "contacted"), ("not_now", "replied"),
+                                            ("needs_info", "needs_human"), ("unsubscribe", "unsubscribed")])
+def test_call_outcome_moves_lead(repo, outcome, status):
+    _approve_first_mail(repo)
+    [task_id] = repo.calls
+    jobs.record_call_outcome(task_id, outcome, "담당자A", notes="메모", repo=repo)
+    assert repo.calls[task_id]["status"] == "done" and repo.leads["L1"]["status"] == status
+    with pytest.raises(ValueError):  # 같은 과제를 두 번 기록할 수 없다
+        jobs.record_call_outcome(task_id, outcome, "담당자A", repo=repo)
+
+
+def test_interested_call_hands_off_with_call_insights(repo):
+    _approve_first_mail(repo)
+    [task_id] = repo.calls
+    out = jobs.record_call_outcome(task_id, "interested", "담당자A", email_received=True,
+                                   meeting_preference="다음 주 화요일 오후", compelling_reason="12월 성수기 전 응답 지연 해소",
+                                   repo=repo)
+    assert out["action"] == "handoff" and repo.leads["L1"]["status"] == "handed_off"
+    summary = repo.handoffs[0]["summary"]
+    assert summary["contact_history"][-1]["type"] == "전화"
+    [ci] = summary["call_insights"]
+    assert ci["email_received"] is True and ci["meeting_preference"] == "다음 주 화요일 오후"
+    assert ci["compelling_reason"] == "12월 성수기 전 응답 지연 해소" and ci["outcome"] == "관심"
+    assert "Compelling Reason: 12월 성수기" in out["handoff"]["text"]
+
+
+def test_call_after_handoff_does_not_change_status(repo):
+    _approve_first_mail(repo)
+    [task_id] = repo.calls
+    jobs.handoff_lead("L1", repo=repo, use_llm=False)
+    out = jobs.record_call_outcome(task_id, "not_now", "담당자A", repo=repo)
+    assert out["action"] == "keep" and repo.leads["L1"]["status"] == "handed_off"
+
+
+def test_call_script_agent_must_ground_and_ask_compelling_questions():
+    sent = {"subject": "한빛몰 성수기 문의 응대 관련", "body": "본문", "sent_at": NOW}
+    crq = [{"angle": "계기", "question": "이번 성수기에 어떤 일이 있었나요?", "listen_for": "문의 폭주", "fact_ids": ["F1"]},
+           {"angle": "기한", "question": "언제까지 해결되면 좋을까요?", "listen_for": "성수기 일정"},
+           {"angle": "미해결 비용", "question": "그대로 두면 무엇이 부담되세요?", "listen_for": "이탈"}]
+    ob_price = {"objection": "비싸다", "response": "1인당 월 29,000원부터입니다"}
+    base = dict(email_summary="요약", meeting_ask="미팅은 언제쯤 편하실까요?", voicemail="음성")
+    llm = ScriptedLLM([
+        LLMResponse("", [call("submit_call_script", **base, compelling_questions=crq[:2],          # 질문 부족
+                              objections=[{**ob_price, "kb_ids": ["04_objections#비싸다 / 예산이 없다"]}])]),
+        LLMResponse("", [call("submit_call_script", **base, compelling_questions=crq,
+                              objections=[{**ob_price, "kb_ids": []}])]),                          # 대응 근거 없음
+        LLMResponse("", [call("search_kb", query="비싸다 예산")]),
+        LLMResponse("", [call("submit_call_script", **base, compelling_questions=crq,               # 가격 자료 없음
+                              objections=[{**ob_price, "kb_ids": ["04_objections#비싸다 / 예산이 없다"]}])]),
+        LLMResponse("", [call("search_kb", query="가격 플랜 스타터")]),
+        LLMResponse("", [call("submit_call_script", **base, compelling_questions=crq,
+                              objections=[{**ob_price, "kb_ids": ["04_objections#비싸다 / 예산이 없다", "02_pricing#플랜"]}])]),
+    ])
+    log = MemoryRunLog()
+    out = run_call_script(LEAD, FACTS, SCORE, sent, llm, log)
+    errors = [s.output["error"] for s in log.steps if s.kind == "tool" and s.is_error]
+    assert len(errors) == 3 and "3개 이상" in errors[0] and "근거" in errors[1] and "가격 자료" in errors[2]
+    assert out["by"] == "agent" and out["script"]["compelling_questions"] == crq
+    assert {"type": "fact", "id": "F1"} in out["script"]["citations"]
+
+
+def test_call_outcome_api_passes_capture_fields(monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from sdr_agent import app as app_module
+
+    monkeypatch.setenv("JOB_TOKEN", "secret")
+    seen = {}
+
+    def fake(task_id, outcome, called_by, **kw):
+        if outcome not in jobs.CALL_OUTCOMES:
+            raise ValueError("bad outcome")
+        seen.update(task_id=task_id, outcome=outcome, called_by=called_by, **kw)
+        return {"task_id": task_id, "outcome": outcome}
+
+    monkeypatch.setattr(app_module.jobs, "record_call_outcome", fake)
+    c = TestClient(app_module.app)
+    h = {"Authorization": "Bearer secret"}
+    body = {"outcome": "interested", "called_by": "담당자A", "email_received": True,
+            "meeting_preference": "다음 주 화요일", "compelling_reason": "성수기 전 지연 해소"}
+    assert c.post("/admin/calls/T1/outcome", json=body).status_code == 401
+    assert c.post("/admin/calls/T1/outcome", json=body, headers=h).status_code == 200
+    assert seen["email_received"] is True and seen["compelling_reason"] == "성수기 전 지연 해소"
+    assert c.post("/admin/calls/T1/outcome", json={**body, "outcome": "maybe"}, headers=h).status_code == 400

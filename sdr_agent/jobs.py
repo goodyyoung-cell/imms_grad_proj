@@ -4,6 +4,8 @@
   research_leads  (new → researched)            자율
   draft_emails    (researched → awaiting_approval) 자율, 초안만
   decide_message  사람 승인 → send_message (샌드박스 발송, → contacted)
+                  첫 메일이면 create_call_task: 발송 1시간 뒤 전화 팔로업 과제 + 콜 스크립트 (자율, 전화는 사람이)
+  record_call_outcome  통화 결과 기록 → 인계 / 수신 거부 / 사람 확인
   handle_reply    답장 → 수신 거부 중단 / 사람 이관 / 답변 초안(승인 대기) / 인계
   handoff_lead    인계 요약 (→ handed_off)
 
@@ -13,6 +15,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
 
 from .agent import MemoryRunLog, RunLog, SupabaseRunLog
@@ -26,6 +29,8 @@ from .outbox import Sender, get_sender
 from .toolkit.dart import DartClient
 from .toolkit.news import GoogleNewsClient, NaverNewsClient
 from .workflows.draft import FOOTER, compose_body, run_draft
+from .workflows.call_script import render_text as render_call_script
+from .workflows.call_script import run_call_script
 from .workflows.handoff import render_text, run_handoff
 from .workflows.reply import detect_unsubscribe, run_reply_triage
 from .workflows.research import run_research
@@ -164,14 +169,17 @@ def decide_message(
     settings: Settings | None = None,
     repo: Any = None,
     sender: Sender | None = None,
+    llm: LLM | None = None,
+    new_log: NewLog | None = None,
 ) -> dict[str, Any]:
-    """사람의 승인 결정을 기록한다. 승인(또는 수정 승인)이면 바로 샌드박스로 발송한다."""
+    """사람의 승인 결정을 기록한다. 승인(또는 수정 승인)이면 바로 샌드박스로 발송한다.
+    첫 메일이 나가면 전화 팔로업 과제와 콜 스크립트를 만든다."""
     if decision not in ("approved", "rejected", "edited"):
         raise ValueError("decision은 approved, rejected, edited 중 하나입니다")
     if decision == "edited" and not (edited_body and edited_body.strip()):
         raise ValueError("edited에는 수정한 본문이 필요합니다")
     s = settings or load_settings()
-    repo, _ = _wire(s, repo, None)
+    repo, new_log = _wire(s, repo, new_log)
     msg = repo.get_message(message_id)
     if msg["status"] != "pending_approval":
         raise ValueError(f"승인 대기 중인 메시지가 아닙니다 (status={msg['status']})")
@@ -188,7 +196,14 @@ def decide_message(
         # 사람이 고쳐도 AI 사용 고지와 수신 거부 안내는 빠질 수 없다
         fields["body"] = edited_body if FOOTER.strip() in edited_body else edited_body.rstrip() + FOOTER
     repo.update_message(message_id, fields)
-    return send_message(message_id, repo=repo, sender=sender)
+    out = send_message(message_id, repo=repo, sender=sender)
+    if out["status"] == "sent" and msg["kind"] == "initial":
+        try:
+            out["call_task"] = create_call_task(message_id, settings=s, repo=repo, llm=llm, new_log=new_log)
+        except Exception as exc:  # 콜 스크립트 실패가 발송 결과를 바꾸지 않게
+            logger.exception("콜 과제 생성 실패: %s", message_id)
+            out["call_task"] = {"status": "failed", "error": f"{type(exc).__name__}: {exc}"}
+    return out
 
 
 def send_message(message_id: str, *, repo: Any, sender: Sender | None = None) -> dict[str, Any]:
@@ -252,6 +267,11 @@ def handle_reply(
     })
     out: dict[str, Any] = {"lead_id": lead_id, "reply_id": reply["id"], **{k: triage[k] for k in (
         "classification", "confidence", "reason", "action", "by", "run_id")}}
+    # 전화는 SDR이 직접 걸므로 취소하지 않는다. 통화 전에 답장 사실과 분류를 볼 수 있게 알림을 붙인다
+    if action != "unsubscribe":  # 수신 거부는 DB 트리거가 콜 과제를 취소한다
+        out["calls_noticed"] = _notice_pending_calls(
+            repo, lead_id, f"고객이 메일로 답장함 (분류: {triage['classification']}, 처리: {action}). "
+                           f"답장: \"{body[:120]}\"", "reply")
 
     if action == "unsubscribe":
         repo.unsubscribe(lead_id)
@@ -296,9 +316,10 @@ def handoff_lead(
             llm = get_llm(provider, s)
         except RuntimeError:
             llm = None  # 키가 없으면 사실 부분과 기본 질문만으로 인계
+    _notice_pending_calls(repo, lead_id, f"인간 SDR에게 인계됨 ({reason}). 인계 담당자와 통화 여부를 맞추세요.", "handoff")
     result = run_handoff(lead, repo.list_facts(lead_id), repo.latest_score(lead_id), repo.list_messages(lead_id),
                          repo.list_replies(lead_id), llm if use_llm else None, new_log() if use_llm and llm else None,
-                         reason=reason, trigger=trigger)
+                         reason=reason, trigger=trigger, calls=repo.list_call_tasks(lead_id=lead_id))
     row = repo.insert_handoff({"lead_id": lead_id, "run_id": result["run_id"], "summary": result["summary"],
                                "screening_questions": result["screening_questions"],
                                "sent_to": s.handoff_to, "channel": "log"})
@@ -306,3 +327,146 @@ def handoff_lead(
     text = render_text(result["summary"], result["screening_questions"])
     notify("handoff", f"인계: {lead.get('company_name')}", text)
     return {"handoff_id": row["id"], "run_id": result["run_id"], "by": result["by"], "text": text}
+
+
+# --- 전화 팔로업 ---
+# 전화는 SDR이 직접 건다 (인터넷·유선 전화와 연동하지 않음). 콜 과제는 SDR의 할 일 목록이다.
+# 시스템이 콜 과제를 취소하는 경우는 수신 거부 하나뿐이다 (DB 트리거).
+# 답장이 오거나 인계되면 취소하지 않고, 통화 전에 볼 수 있게 과제에 알림을 붙인다.
+
+KST = timezone(timedelta(hours=9))
+CALL_OUTCOMES = {
+    "interested": "handoff",        # 미팅·데모 의사 → 인계
+    "not_now": "replied",           # 나중에 → 시점 확인
+    "needs_info": "needs_human",    # 자료·답변 필요 → 담당자 확인
+    "wrong_contact": "needs_human", # 담당자 아님 → 담당자 확인
+    "no_answer": None,              # 상태 유지 (메일 회신 대기)
+    "voicemail": None,
+    "unsubscribe": "unsubscribe",   # 연락 거부 → 모든 발송·전화 중단
+}
+
+
+def call_due_at(sent_at: datetime, delay_minutes: int, hours: tuple[int, int]) -> datetime:
+    """발송 시각 + delay_minutes. 평일 hours(시작 이상, 끝 미만) 밖이면 다음 평일 시작 시각으로 (공휴일 미고려)."""
+    start_h, end_h = hours
+    due = sent_at.astimezone(KST) + timedelta(minutes=delay_minutes)
+    if due.weekday() < 5 and start_h <= due.hour < end_h:
+        return due
+    d = due.date()
+    if due.weekday() >= 5 or due.hour >= end_h:
+        d += timedelta(days=1)
+        while d.weekday() >= 5:
+            d += timedelta(days=1)
+    return datetime(d.year, d.month, d.day, start_h, tzinfo=KST)
+
+
+def _parse_ts(value: Any) -> datetime:
+    if isinstance(value, datetime):
+        return value
+    return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+
+
+def _notice_pending_calls(repo: Any, lead_id: str, text: str, kind: str) -> int:
+    """대기 중인 콜 과제에 통화 전 알림을 붙인다 (취소하지 않음)."""
+    pending = repo.list_call_tasks(lead_id=lead_id, status="pending")
+    for t in pending:
+        script = dict(t["script"])
+        script["notices"] = [*script.get("notices", []),
+                             {"kind": kind, "text": text, "at": datetime.now(timezone.utc).isoformat()}]
+        repo.update_call_task(t["id"], {"script": script})
+    return len(pending)
+
+
+def create_call_task(
+    message_id: str,
+    *,
+    provider: str | None = None,
+    trigger: str = "email_sent",
+    settings: Settings | None = None,
+    repo: Any = None,
+    llm: LLM | None = None,
+    new_log: NewLog | None = None,
+) -> dict[str, Any]:
+    """발송된 메일을 1시간쯤 뒤 전화로 팔로업할 과제와 콜 스크립트를 만든다. 키가 없으면 기본 스크립트."""
+    s = settings or load_settings()
+    repo, new_log = _wire(s, repo, new_log)
+    msg = repo.get_message(message_id)
+    if msg["status"] != "sent":
+        raise ValueError(f"발송된 메일만 팔로업할 수 있습니다 (status={msg['status']})")
+    lead = repo.get_lead(msg["lead_id"])
+    if lead.get("unsubscribed_at"):
+        return {"status": "skipped", "reason": "수신 거부"}
+    if llm is None:
+        try:
+            llm = get_llm(provider, s)
+        except RuntimeError:
+            llm = None
+    result = run_call_script(lead, repo.list_facts(lead["id"]), repo.latest_score(lead["id"]), msg, llm,
+                             new_log() if llm else None, booking_url=s.booking_url, trigger=trigger)
+    sent_at = _parse_ts(msg.get("sent_at") or datetime.now(timezone.utc))
+    due = call_due_at(sent_at, s.call_delay_minutes, s.call_hours_kst)
+    task = repo.insert_call_task({"lead_id": lead["id"], "message_id": message_id, "run_id": result["run_id"],
+                                  "script": result["script"], "due_at": due.isoformat()})
+    text = render_call_script(result["script"], lead, due.strftime("%Y-%m-%d %H:%M KST"))
+    notify("call", f"전화 팔로업 예정: {lead.get('company_name')} ({due:%m/%d %H:%M})", text)
+    return {"task_id": task["id"], "status": "pending", "due_at": due.isoformat(), "by": result["by"],
+            "run_id": result["run_id"], "text": text}
+
+
+def due_calls(*, until: datetime | None = None, settings: Settings | None = None, repo: Any = None) -> list[dict]:
+    """지금(또는 until)까지 걸어야 할 전화 목록."""
+    s = settings or load_settings()
+    repo, _ = _wire(s, repo, None)
+    until = until or datetime.now(timezone.utc)
+    return repo.list_call_tasks(status="pending", due_before=until.isoformat())
+
+
+def record_call_outcome(
+    task_id: str,
+    outcome: str,
+    called_by: str,
+    *,
+    notes: str | None = None,
+    email_received: bool | None = None,
+    meeting_preference: str | None = None,
+    compelling_reason: str | None = None,
+    settings: Settings | None = None,
+    repo: Any = None,
+    llm: LLM | None = None,
+    new_log: NewLog | None = None,
+) -> dict[str, Any]:
+    """SDR이 통화 결과를 기록한다. 결과에 따라 인계·수신 거부·사람 확인으로 이어진다.
+
+    이미 인계된 리드는 상태를 되돌리지 않는다 (통화 내용만 남긴다). 수신 거부는 언제든 적용한다.
+    """
+    if outcome not in CALL_OUTCOMES:
+        raise ValueError(f"outcome은 {list(CALL_OUTCOMES)} 중 하나입니다")
+    s = settings or load_settings()
+    repo, new_log = _wire(s, repo, new_log)
+    task = repo.get_call_task(task_id)
+    if task["status"] != "pending":
+        raise ValueError(f"대기 중인 콜 과제가 아닙니다 (status={task['status']})")
+    repo.update_call_task(task_id, {
+        "status": "done", "outcome": outcome, "outcome_notes": notes, "called_by": called_by,
+        "called_at": datetime.now(timezone.utc).isoformat(), "email_received": email_received,
+        "meeting_preference": (meeting_preference or "").strip() or None,
+        "compelling_reason": (compelling_reason or "").strip() or None,
+    })
+    lead_id = task["lead_id"]
+    lead = repo.get_lead(lead_id)
+    action = CALL_OUTCOMES[outcome]
+    out: dict[str, Any] = {"task_id": task_id, "outcome": outcome, "action": action or "keep"}
+    if action == "unsubscribe":
+        repo.unsubscribe(lead_id)
+        notify("unsubscribe", f"전화에서 연락 거부: {lead.get('company_name')}", "모든 발송과 전화를 중단했습니다.")
+    elif lead.get("status") in ("handed_off", "unsubscribed"):
+        out["action"] = "keep"  # 이미 인계·중단된 리드는 기록만 남긴다
+    elif action == "handoff":
+        reason = "전화 팔로업에서 관심 표명" + (f" (희망 미팅: {meeting_preference})" if meeting_preference else "")
+        out["handoff"] = handoff_lead(lead_id, reason=reason, trigger="call", settings=s, repo=repo,
+                                      llm=llm, new_log=new_log)
+    elif action:
+        repo.set_status(lead_id, action)
+        if action == "needs_human":
+            notify("needs_human", f"전화 팔로업 후 확인 필요: {lead.get('company_name')}", f"{outcome}: {notes or ''}")
+    return out

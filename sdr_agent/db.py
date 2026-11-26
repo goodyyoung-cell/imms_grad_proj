@@ -126,6 +126,31 @@ class Repo:
     def insert_handoff(self, row: dict) -> dict:
         return self.c.table("handoffs").insert(row).execute().data[0]
 
+    # --- 콜 팔로업 ---
+
+    def insert_call_task(self, row: dict) -> dict:
+        return self.c.table("call_tasks").insert(row).execute().data[0]
+
+    def get_call_task(self, task_id: str) -> dict:
+        rows = self.c.table("call_tasks").select("*").eq("id", task_id).limit(1).execute().data
+        if not rows:
+            raise LookupError(f"콜 과제 없음: {task_id}")
+        return rows[0]
+
+    def list_call_tasks(self, lead_id: str | None = None, status: str | None = None,
+                        due_before: str | None = None, limit: int = 100) -> list[dict]:
+        q = self.c.table("call_tasks").select("*")
+        if lead_id:
+            q = q.eq("lead_id", lead_id)
+        if status:
+            q = q.eq("status", status)
+        if due_before:
+            q = q.lte("due_at", due_before)
+        return q.order("due_at").limit(limit).execute().data
+
+    def update_call_task(self, task_id: str, fields: dict) -> dict:
+        return self.c.table("call_tasks").update(fields).eq("id", task_id).execute().data[0]
+
     def insert_lead(self, row: dict) -> dict:
         return self.c.table("leads").insert(row).execute().data[0]
 
