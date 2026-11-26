@@ -20,6 +20,8 @@ from ..toolkit.knowledge import GroundingError, KnowledgeContext
 
 CLASSES = ["interested", "question", "not_now", "not_decision_maker", "out_of_office", "unsubscribe", "unclear"]
 CONFIDENCE_THRESHOLD = 0.7
+# 규칙이 못 잡은 수신 거부를 LLM만 판단한 경우: 이 확신도 이상이면 즉시 중단, 미만이면 사람이 확인 (2026-11-26 결정)
+UNSUBSCRIBE_CONFIDENCE = 0.9
 
 # 수신 거부 의사 표현. 넓게 잡는다 (놓치는 것보다 잘못 멈추는 편이 낫다)
 UNSUBSCRIBE_PATTERNS = [
@@ -65,7 +67,8 @@ def detect_unsubscribe(text: str) -> bool:
 
 def decide(classification: str, confidence: float, has_answer: bool) -> str:
     if classification == "unsubscribe":
-        return "unsubscribe"  # 확신도와 관계없이 멈춘다
+        # 규칙이 감지한 수신 거부는 여기 오기 전에 이미 중단된다. LLM 판단은 확신이 높을 때만 바로 멈춘다
+        return "unsubscribe" if confidence >= UNSUBSCRIBE_CONFIDENCE else "confirm_unsubscribe"
     if classification not in ACTIONS or confidence < CONFIDENCE_THRESHOLD:
         return "needs_human"
     action = ACTIONS[classification]

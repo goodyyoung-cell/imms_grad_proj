@@ -201,7 +201,8 @@ def test_unsubscribe_skips_llm():
     ("question", 0.9, True, "answer_draft"),
     ("question", 0.9, False, "needs_human"),       # 근거 없는 질문
     ("unclear", 0.95, False, "needs_human"),
-    ("unsubscribe", 0.3, False, "unsubscribe"),    # 확신 낮아도 멈춘다
+    ("unsubscribe", 0.95, False, "unsubscribe"),          # LLM 수신 거부, 확신 높음 → 즉시 중단
+    ("unsubscribe", 0.75, False, "confirm_unsubscribe"),  # 확신 낮음 → 사람이 확인 (Gemini R23 사례)
     ("not_now", 0.8, False, "followup_later"),
 ])
 def test_decide(cls, conf, has_answer, expected):
@@ -482,3 +483,29 @@ def test_sent_phrase_matches_call_time(sent, call_at, phrase):
     assert sent_phrase(sent, call_at) == phrase
     s = assemble(LEAD, {"subject": "제목"}, {}, None, phrase)
     assert s["opening"].count(f"{phrase} '제목'") == 1 and f"{phrase} 노바데스크" in s["voicemail"]
+
+
+def test_low_confidence_llm_unsubscribe_goes_to_human_and_flags_calls(repo):
+    _approve_first_mail(repo)
+    llm = ScriptedLLM([LLMResponse("", [call("submit_triage", classification="unsubscribe", confidence=0.75,
+                                             reason="바꿀 필요를 못 느낀다고 함")])])
+    out = jobs.handle_reply("지금 쓰는 헬프데스크가 있어서요. 굳이 바꿀 필요는 못 느낍니다.", lead_id="L1", repo=repo, llm=llm)
+    assert out["action"] == "confirm_unsubscribe"
+    lead = repo.leads["L1"]
+    assert lead["status"] == "needs_human" and lead["unsubscribed_at"] is None  # 아직 멈추지 않음
+    [task] = repo.calls.values()
+    assert task["status"] == "pending" and task["script"]["notices"][0]["kind"] == "unsubscribe_suspected"
+    assert repo.replies[-1]["handled_by"] == "human"  # 사람이 확인할 답장
+
+    # 담당자가 확인하고 수신 거부로 확정하면 남은 메일·전화가 모두 멈춘다
+    res = jobs.confirm_unsubscribe("L1", "담당자A", note="통화로 확인", repo=repo)
+    assert res["status"] == "unsubscribed" and repo.leads["L1"]["status"] == "unsubscribed"
+    assert task["id"] and repo.calls[task["id"]]["status"] == "cancelled"
+    assert jobs.confirm_unsubscribe("L1", "담당자A", repo=repo)["status"] == "already_unsubscribed"
+
+
+def test_high_confidence_llm_unsubscribe_stops_immediately(repo):
+    llm = ScriptedLLM([LLMResponse("", [call("submit_triage", classification="unsubscribe", confidence=0.95,
+                                             reason="연락을 원하지 않음")])])
+    out = jobs.handle_reply("앞으로 이런 제안은 받지 않겠습니다.", lead_id="L1", repo=repo, llm=llm)
+    assert out["action"] == "unsubscribe" and repo.leads["L1"]["status"] == "unsubscribed"

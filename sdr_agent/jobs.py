@@ -266,12 +266,16 @@ def handle_reply(
     reply = repo.insert_reply({
         "lead_id": lead_id, "message_id": message_id or (last or {}).get("id"), "run_id": triage["run_id"],
         "body": body, "classification": triage["classification"], "confidence": triage["confidence"],
-        "handled_by": "human" if action == "needs_human" else "agent",
+        "handled_by": "human" if action in ("needs_human", "confirm_unsubscribe") else "agent",
     })
     out: dict[str, Any] = {"lead_id": lead_id, "reply_id": reply["id"], **{k: triage[k] for k in (
         "classification", "confidence", "reason", "action", "by", "run_id")}}
     # 전화는 SDR이 직접 걸므로 취소하지 않는다. 통화 전에 답장 사실과 분류를 볼 수 있게 알림을 붙인다
-    if action != "unsubscribe":  # 수신 거부는 DB 트리거가 콜 과제를 취소한다
+    if action == "confirm_unsubscribe":
+        out["calls_noticed"] = _notice_pending_calls(
+            repo, lead_id, f"수신 거부 의심 (확신도 {triage['confidence']:.2f}). 담당자 확인 전까지 통화를 보류하세요. "
+                           f"답장: \"{body[:120]}\"", "unsubscribe_suspected")
+    elif action != "unsubscribe":  # 수신 거부는 DB 트리거가 콜 과제를 취소한다
         out["calls_noticed"] = _notice_pending_calls(
             repo, lead_id, f"고객이 메일로 답장함 (분류: {triage['classification']}, 처리: {action}). "
                            f"답장: \"{body[:120]}\"", "reply")
@@ -292,10 +296,35 @@ def handle_reply(
     elif action == "followup_later":
         repo.set_status(lead_id, "replied")
         notify("followup", f"후속 시점 확인 필요: {lead.get('company_name')}", triage["reason"])
+    elif action == "confirm_unsubscribe":
+        repo.set_status(lead_id, "needs_human")
+        notify("needs_human", f"수신 거부 의심, 확인 필요: {lead.get('company_name')}",
+               f"AI가 수신 거부로 보았지만 확신도가 낮습니다 ({triage['confidence']:.2f}). 맞으면 수신 거부로 확정하세요:\n"
+               f"  python -m sdr_agent.cli unsubscribe {lead_id} --by <이름>\n\n답장: {body}")
     else:  # needs_human
         repo.set_status(lead_id, "needs_human")
         notify("needs_human", f"사람 확인 필요: {lead.get('company_name')}", f"{triage['reason']}\n\n{body}")
     return out
+
+
+def confirm_unsubscribe(
+    lead_id: str,
+    decided_by: str,
+    *,
+    note: str | None = None,
+    settings: Settings | None = None,
+    repo: Any = None,
+) -> dict[str, Any]:
+    """담당자가 수신 거부를 확정한다. 보내지 않은 메일과 걸지 않은 전화는 DB 트리거가 취소한다."""
+    s = settings or load_settings()
+    repo, _ = _wire(s, repo, None)
+    lead = repo.get_lead(lead_id)
+    if lead.get("unsubscribed_at"):
+        return {"lead_id": lead_id, "status": "already_unsubscribed"}
+    repo.unsubscribe(lead_id)
+    logger.info("수신 거부 확정: %s by %s (%s)", lead_id, decided_by, note or "")
+    notify("unsubscribe", f"수신 거부 확정: {lead.get('company_name')}", f"확정한 사람: {decided_by}. {note or ''}".strip())
+    return {"lead_id": lead_id, "status": "unsubscribed", "decided_by": decided_by}
 
 
 def handoff_lead(

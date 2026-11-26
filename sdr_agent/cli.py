@@ -77,7 +77,7 @@ def eval_replies(path: Path, provider: str | None = None, llm=None) -> dict:
                      "confidence": r["confidence"], "action": r["action"], "by": r["by"], "ok": ok,
                      "has_answer": bool(r.get("answer"))})
     return {"total": len(cases), "correct": correct, "accuracy": round(correct / max(1, len(cases)), 3),
-            "to_human": sum(r["action"] == "needs_human" for r in rows), "cases": rows}
+            "to_human": sum(r["action"] in ("needs_human", "confirm_unsubscribe") for r in rows), "cases": rows}
 
 
 def main() -> None:
@@ -101,6 +101,11 @@ def main() -> None:
         a.add_argument("--by", required=True, help="결정한 사람")
         a.add_argument("--note")
         a.add_argument("--edited-body-file", type=Path, help="수정해서 승인할 본문 파일 (approve만)")
+
+    un = sub.add_parser("unsubscribe", help="담당자가 수신 거부를 확정")
+    un.add_argument("lead_id")
+    un.add_argument("--by", required=True, help="확정한 사람")
+    un.add_argument("--note")
 
     cl = sub.add_parser("calls", help="걸어야 할 전화와 콜 스크립트 보기")
     cl.add_argument("--all", action="store_true", help="예정 시각이 안 된 것까지")
@@ -168,6 +173,8 @@ def main() -> None:
             print(f"\n=== {t['id']} (예정 {t['due_at']})\n{render_call(t['script'], repo.get_lead(t['lead_id']))}")
         if not tasks:
             print("걸어야 할 전화가 없습니다." + ("" if args.all else " (--all 로 예정된 것까지 보기)"))
+    elif args.cmd == "unsubscribe":
+        _print(jobs.confirm_unsubscribe(args.lead_id, args.by, note=args.note))
     elif args.cmd == "call-outcome":
         received = {"yes": True, "no": False}.get(args.received) if args.received else None
         _print(jobs.record_call_outcome(args.task_id, args.outcome, args.by, notes=args.notes, email_received=received,

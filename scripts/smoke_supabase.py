@@ -247,9 +247,9 @@ def main() -> int:
               and t["meeting_preference"] == "1월 둘째 주" and t["compelling_reason"] == "1분기 콜센터 인력 축소 예정"
               and repo.get_lead(c)["status"] == "replied", "C1 통화 결과·수신 여부·희망 미팅·Compelling Reason 기록", res)
         again = jobs.create_call_task(d["message_id"], repo=repo, llm=call_script_llm(), new_log=new_log)
-        repo.unsubscribe(c)
-        check(repo.get_call_task(again["task_id"])["status"] == "cancelled",
-              "C2 수신 거부 시 대기 중인 전화도 자동 취소 (DB 트리거)")
+        res = jobs.confirm_unsubscribe(c, "스모크 점검", note="담당자 확인", repo=repo)
+        check(res["status"] == "unsubscribed" and repo.get_call_task(again["task_id"])["status"] == "cancelled",
+              "C2 담당자가 수신 거부 확정 → 대기 중인 전화도 자동 취소 (DB 트리거)", res)
         try:
             jobs.record_call_outcome(again["task_id"], "interested", "스모크 점검", repo=repo)
             check(False, "C3 취소된 전화에는 결과를 기록할 수 없음")

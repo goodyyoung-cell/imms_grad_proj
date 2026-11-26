@@ -52,6 +52,7 @@ uvicorn sdr_agent.app:app --reload                      # 웹 서버 (http://loc
 | `POST /jobs/draft` | researched 리드에 첫 메일 초안 |
 | `GET /admin/messages` | 승인 대기 메시지 목록 |
 | `POST /admin/messages/{id}/decision` | `{"decision": "approved"\|"rejected"\|"edited", "decided_by": "..."}` 승인하면 바로 샌드박스 발송 |
+| `POST /admin/leads/{id}/unsubscribe` | 담당자가 수신 거부 확정 `{"decided_by": "...", "note": "..."}` |
 | `GET /admin/calls` | 지금까지 걸어야 할 전화와 콜 스크립트 (`due_only=false`면 대기 중 전체) |
 | `POST /admin/calls/{id}/outcome` | 통화 결과 `{"outcome", "called_by", "email_received", "meeting_preference", "compelling_reason", "notes"}` |
 | `POST /webhooks/reply` | 답장 도착 `{"from_email": "...", "body": "..."}` |

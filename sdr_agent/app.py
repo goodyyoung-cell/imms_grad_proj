@@ -194,6 +194,20 @@ class Decision(BaseModel):
     note: str | None = None
 
 
+class UnsubscribeConfirm(BaseModel):
+    decided_by: str
+    note: str | None = None
+
+
+@app.post("/admin/leads/{lead_id}/unsubscribe", dependencies=auth)
+def admin_unsubscribe(lead_id: str, u: UnsubscribeConfirm) -> dict:
+    """담당자가 수신 거부를 확정한다 (AI가 확신도 낮게 수신 거부로 본 경우 등)."""
+    try:
+        return jobs.confirm_unsubscribe(lead_id, u.decided_by, note=u.note)
+    except LookupError as exc:
+        raise HTTPException(404, str(exc))
+
+
 @app.get("/admin/calls", dependencies=auth)
 def admin_calls(due_only: bool = True) -> dict:
     """걸어야 할 전화 목록 (due_only=false면 대기 중인 전화 전체)."""
