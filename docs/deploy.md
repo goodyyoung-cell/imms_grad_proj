@@ -98,7 +98,7 @@ curl -X POST "$URL/jobs/research" -H "Authorization: Bearer $JOB_TOKEN" \
 
 `/jobs/research`가 `인증 실패`를 돌려주면 터미널을 새로 열어 `$JOB_TOKEN`이 비어 있는 경우가 많다. 저장소 폴더에서 `set -a; source .env; set +a`를 다시 실행한다.
 
-LLM·DART 키가 생기면 같은 방식으로 비밀값을 만들고 권한을 준 뒤 서비스에 추가한다:
+LLM·DART·네이버 키가 생기면 `.env`에 넣고 `bash scripts/sync_secrets.sh`를 실행한다. 비밀값 등록, 권한 부여, Cloud Run 연결을 한 번에 한다 (키는 화면에 나오지 않음). 수동으로 할 때는:
 
 ```bash
 gcloud run services update sdr-agent \
