@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api/client";
 import { invalidate, useAction, useQuery } from "../api/hooks";
+import { complianceChecks } from "../lib/compliance";
 import { kstDateTime } from "../lib/format";
 import { MESSAGE_STATUS, REASON_CODES } from "../lib/labels";
 import { useToast } from "../toast";
@@ -18,6 +19,7 @@ interface Props {
 export function ApprovalPanel({ message, onDecided, shortcuts = false }: Props) {
   const toast = useToast();
   const detail = useQuery(() => api.lead(message.lead_id), [message.lead_id]);
+  const kb = useQuery(() => api.kb(), []);
   const [editing, setEditing] = useState(false);
   const [body, setBody] = useState(message.body);
   const [rejecting, setRejecting] = useState(false);
@@ -65,6 +67,18 @@ export function ApprovalPanel({ message, onDecided, shortcuts = false }: Props) 
   const lead = message.lead;
   const d = detail.data;
   const st = MESSAGE_STATUS[message.status];
+  const kbReady = !!kb.data || !!kb.error || message.citations.every((c) => c.type !== "kb");
+  const support = useMemo(() => {
+    if (!d || !kbReady) return null;
+    const ids = new Set(message.citations.map((c) => c.id));
+    const facts = d.facts.filter((f) => ids.has(f.id)).map((f) => f.value);
+    const all = (kb.data ?? []).flatMap((x) => x.sections);
+    const kbText = all.filter((s) => ids.has(s.id)).map((s) => s.heading + " " + s.text);
+    const missing = message.citations.some((c) => c.type === "kb" && !all.some((s) => s.id === c.id));
+    if (missing && !kb.error) return null;
+    return kb.error ? null : [...facts, ...kbText, lead?.company_name ?? "", lead?.name ?? ""];
+  }, [d, kb.data, kb.error, kbReady, message.citations, lead]);
+  const checks = complianceChecks(message.subject, body, support);
 
   return (
     <div className="approval">
@@ -98,7 +112,17 @@ export function ApprovalPanel({ message, onDecided, shortcuts = false }: Props) 
           {detail.error && <ErrorBox message={detail.error} onRetry={detail.reload} />}
           {d && (
             <>
-              <Evidence citations={message.citations} facts={d.facts} />
+              <Evidence citations={message.citations} facts={d.facts} kbDocs={kb.data} />
+              <h4>발송 전 점검</h4>
+              <ul className="checks">
+                {checks.map((c) => (
+                  <li key={c.key} className={`check ${c.state}`}>
+                    <span className="check-mark" aria-hidden>{c.state === "ok" ? "✓" : c.state === "warn" ? "!" : "·"}</span>
+                    <span>{c.label}{c.detail && <span className="muted small"> {c.detail}</span>}</span>
+                  </li>
+                ))}
+              </ul>
+              <p className="muted small">자동 점검은 참고용이며, 최종 판단은 담당자가 합니다.</p>
               <h4>선별 근거</h4>
               <ScoreBreakdown score={d.score} />
             </>

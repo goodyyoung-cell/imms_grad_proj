@@ -1,6 +1,6 @@
 import type {
-  CallOutcomeInput, CallTask, DecisionInput, ImportResult, Lead, LeadDetail, LeadList, Message, Run,
-  RunDetail, Summary,
+  Approval, CallOutcomeInput, CallTask, DecisionInput, ImportResult, KbDoc, Lead, LeadDetail, LeadList, Message, ReplyRow, Run,
+  RunDetail, Summary, SystemStatus,
 } from "../types";
 import { ApiError } from "./errors";
 import { mockRequest } from "./mock";
@@ -87,6 +87,12 @@ export const api = {
   confirmUnsubscribe: (leadId: string, note?: string) =>
     request<Record<string, unknown>>("POST", `/admin/leads/${leadId}/unsubscribe`, { note }),
   importLeads: (form: FormData) => request<ImportResult>("POST", "/admin/leads/import", form),
+  replies: (p: { classification?: string; handled_by?: string; limit?: number } = {}) =>
+    request<{ replies: ReplyRow[] }>("GET", "/admin/replies" + qs({ limit: 100, ...p })).then((r) => r.replies),
+  approvals: () => request<{ approvals: Approval[] }>("GET", "/admin/approvals?limit=200").then((r) => r.approvals),
+  kb: () => request<{ docs: KbDoc[] }>("GET", "/admin/kb").then((r) => r.docs),
+  status: () => request<SystemStatus>("GET", "/admin/status"),
+  notifyTest: () => request<{ posted: boolean; reason?: string | null }>("POST", "/admin/notify-test", {}),
   metrics: () => request<{ rows: string[][] }>("GET", "/admin/metrics"),
   baseline: () => request<{ tasks: Record<string, string>; timings: unknown[]; stats: Record<string, { n: number; median: number | null; mean: number | null }> }>("GET", "/admin/baseline"),
   addBaseline: (b: { task: string; minutes: number; label?: string }) => request<Record<string, unknown>>("POST", "/admin/baseline", b),

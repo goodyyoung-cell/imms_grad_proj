@@ -116,6 +116,32 @@ export interface Reply {
   handled_by: "agent" | "human" | null;
 }
 
+export interface ReplyRow extends Reply { run_id?: string | null; lead?: LeadBrief | null }
+
+export interface Approval {
+  id: string;
+  message_id: string;
+  decision: "approved" | "edited" | "rejected";
+  decided_by: string;
+  decided_at: string;
+  note: string | null;
+  reason_code: string | null;
+  original_body: string | null;
+  review_seconds: number | null;
+  channel: string | null;
+  message: { id: string; lead_id: string; kind: string; subject: string; body: string; status: MessageStatus } | null;
+  lead: LeadBrief | null;
+}
+
+export interface KbDoc { id: string; title: string; sections: { id: string; heading: string; text: string }[] }
+
+export interface SystemStatus {
+  mode: { send: string; llm_default: string; providers: Record<string, boolean> };
+  slack: { configured: boolean; signing_configured: boolean; channel: string | null; approvers: number; notify_kinds: string[]; web_url: string | null };
+  safeguards: { require_consent: boolean; max_sends_per_day: number; sent_today: number; sender_name: string | null; sender_contact: string | null };
+  knowledge_docs: number;
+}
+
 export interface HandoffSummary {
   lead: Record<string, unknown>;
   handoff_reason: string;

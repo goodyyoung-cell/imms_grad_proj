@@ -2,6 +2,7 @@ import { useState } from "react";
 import { api } from "../api/client";
 import { invalidate, useAction, useQuery } from "../api/hooks";
 import { kstDateTime } from "../lib/format";
+import { nextAction } from "../lib/nextAction";
 import { MESSAGE_STATUS, OUTCOME, REPLY_CLASS, SOURCE } from "../lib/labels";
 import { useToast } from "../toast";
 import type { Handoff, LeadDetail } from "../types";
@@ -77,6 +78,8 @@ export function LeadDetailView({ leadId }: { leadId: string }) {
         </div>
         <div className="lead-head-side"><StatusBadge status={l.status} /><Score value={d.score?.score} tags={d.score?.tags} /></div>
       </header>
+
+      {(() => { const na = nextAction(d); return na.text ? <div className={`next-action ${na.tone}`}><strong>다음 할 일</strong> {na.text}</div> : null; })()}
 
       {l.status === "needs_human" && (
         <div className="notice warn">

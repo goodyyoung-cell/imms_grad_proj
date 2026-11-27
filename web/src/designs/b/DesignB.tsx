@@ -6,6 +6,9 @@ import { useAuth } from "../../auth";
 import { CallPanel } from "../../components/CallPanel";
 import { ImportPanel } from "../../components/ImportPanel";
 import { MetricsPanel } from "../../components/MetricsPanel";
+import { ApprovalHistoryPanel, RepliesPanel } from "../../components/HistoryPanels";
+import { KbPanel, StatusPanel } from "../../components/SettingsPanels";
+import { QuickSearch } from "../../components/QuickSearch";
 import { LeadDetailView } from "../../components/LeadDetailView";
 import { RunList } from "../../components/RunTrace";
 import { Badge, Empty, ErrorBox, Loading, Score } from "../../components/ui";
@@ -185,8 +188,12 @@ export function DesignB() {
         <div className="brand"><span className="brand-mark" aria-hidden>S</span>SDR 에이전트 관제</div>
         <nav>
           <NavLink to="/b" end>관제</NavLink>
+          <NavLink to="/b/replies">답장함</NavLink>
           <NavLink to="/b/activity">에이전트 기록</NavLink>
+          <NavLink to="/b/history">승인 이력</NavLink>
+          <NavLink to="/b/kb">승인 자료</NavLink>
           <NavLink to="/b/metrics">평가 지표</NavLink>
+          <NavLink to="/b/settings">설정·상태</NavLink>
           <NavLink to="/b/import">리드 올리기</NavLink>
         </nav>
         <div className="b-user">
@@ -201,6 +208,10 @@ export function DesignB() {
           <Route path="*" element={<div className="b-layout"><Board /><Feed /></div>} />
           <Route path="activity" element={<ActivityB />} />
           <Route path="metrics" element={<div className="page narrow"><MetricsPanel /></div>} />
+          <Route path="replies" element={<div className="page narrow"><header className="page-head"><h1>답장함</h1><p className="muted">고객이 보낸 답장과 에이전트의 분류입니다. 눌러서 고객 상세를 엽니다.</p></header><RepliesPanel toLead={(id) => `/b/lead/${id}`} /></div>} />
+          <Route path="history" element={<div className="page"><header className="page-head"><h1>승인 이력</h1><p className="muted">누가 언제 어떤 메일을 승인, 수정, 반려했는지 기록합니다. 행을 누르면 수정한 내용을 볼 수 있습니다.</p></header><ApprovalHistoryPanel /></div>} />
+          <Route path="kb" element={<div className="page narrow"><header className="page-head"><h1>승인 자료</h1></header><KbPanel /></div>} />
+          <Route path="settings" element={<div className="page"><header className="page-head"><h1>설정·상태</h1></header><StatusPanel /></div>} />
           <Route path="import" element={<div className="page narrow"><ImportPanel /></div>} />
         </Routes>
         <Routes>
@@ -209,6 +220,7 @@ export function DesignB() {
           <Route path="message/:id" element={<MessageRedirect />} />
         </Routes>
       </main>
+      <QuickSearch toLead={(id) => `/b/lead/${id}`} />
     </div>
   );
 }

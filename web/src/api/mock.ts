@@ -1,6 +1,7 @@
 // 백엔드 없이 화면을 시험하고 시연하기 위한 모의 서버. `?mock=1`로 켠다.
 // 데이터는 실제 배포 서버의 응답 일부(회사는 상장사, 담당자·이메일은 가상)에 가상 상태 몇 건을 더한 것이다.
 import type {
+  Approval, KbDoc, ReplyRow, SystemStatus,
   CallOutcomeInput, CallTask, DecisionInput, Handoff, LeadDetail, LeadStatus, Message, Reply, ReplyClass,
   Run, RunDetail, Summary,
 } from "../types";
@@ -21,7 +22,38 @@ const uid = (p: string) => `${p}-${++seq}`;
 const nowIso = () => new Date().toISOString();
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-export function resetMock() { db = structuredClone(fixtures) as unknown as Fixtures; seq = 1000; }
+let approvals: Approval[] = [];
+
+function seedApprovals() {
+  const sent = Object.values(db.details).flatMap((d) => d.messages).filter((m) => m.status === "sent");
+  approvals = sent.map((m, i) => ({
+    id: "appr-seed-${i}", message_id: m.id, decision: i === 0 ? "edited" : "approved", decided_by: i === 0 ? "민수" : "영훈",
+    decided_at: m.sent_at ?? m.created_at, note: null, reason_code: null,
+    original_body: i === 0 ? m.body.replace(/\n.*$/s, "") : null, review_seconds: i === 0 ? 94 : 41, channel: i === 0 ? "slack" : "admin",
+    message: { id: m.id, lead_id: m.lead_id, kind: m.kind, subject: m.subject, body: m.body, status: m.status }, lead: brief(m.lead_id),
+  }));
+}
+
+export function resetMock() { db = structuredClone(fixtures) as unknown as Fixtures; seq = 1000; seedApprovals(); }
+
+function kbFromRuns(): KbDoc[] {
+  const docs = new Map<string, KbDoc>();
+  for (const rd of Object.values(db.runDetails)) {
+    for (const s of rd.steps) {
+      const results = (s.output as { results?: { id: string; doc: string; heading: string; text: string }[] } | null)?.results;
+      if (s.tool_name !== "search_kb" || !results) continue;
+      for (const r of results) {
+        const key = r.id.split("#")[0];
+        const d = docs.get(key) ?? { id: key, title: r.doc, sections: [] };
+        if (!d.sections.some((x) => x.id === r.id)) d.sections.push({ id: r.id, heading: r.heading, text: r.text });
+        docs.set(key, d);
+      }
+    }
+  }
+  return [...docs.values()].sort((a, b) => a.id.localeCompare(b.id));
+}
+
+seedApprovals();
 
 function brief(id: string) {
   const l = db.leads.find((x) => x.id === id) ?? db.details[id]?.lead;
@@ -166,7 +198,14 @@ export async function mockRequest<T>(method: string, path: string, body?: unknow
     const msg = allMessages().find((m) => m.id === decision[1]);
     if (!msg) throw new ApiError(404, "메일을 찾을 수 없습니다");
     if (msg.status !== "pending_approval") throw new ApiError(400, "이미 처리된 메일입니다");
+    const original = msg.body;
+    const record = (decision: Approval["decision"]) => approvals.unshift({
+      id: uid("appr"), message_id: msg.id, decision, decided_by: "시연", decided_at: nowIso(), note: d.note ?? null, reason_code: d.reason_code ?? null,
+      original_body: decision === "edited" ? original : null, review_seconds: d.review_seconds ?? null, channel: "admin",
+      message: { id: msg.id, lead_id: msg.lead_id, kind: msg.kind, subject: msg.subject, body: d.edited_body ?? msg.body, status: msg.status }, lead: brief(msg.lead_id),
+    });
     if (d.decision === "rejected") {
+      record("rejected");
       msg.status = "rejected"; setStatus(msg.lead_id, "needs_human");
       return out({ message_id: msg.id, status: "rejected" });
     }
@@ -174,7 +213,7 @@ export async function mockRequest<T>(method: string, path: string, body?: unknow
       if (!d.edited_body?.trim()) throw new ApiError(400, "수정한 본문이 필요합니다");
       msg.body = d.edited_body;
     }
-    msg.status = "sent"; msg.sent_at = nowIso(); msg.provider_message_id = uid("sandbox");
+    msg.status = "sent"; msg.sent_at = nowIso(); msg.provider_message_id = uid("sandbox"); record(d.decision);
     setStatus(msg.lead_id, "contacted");
     const detail = detailOf(msg.lead_id);
     const call = msg.kind === "initial" ? makeCall(msg) : null;
@@ -209,6 +248,25 @@ export async function mockRequest<T>(method: string, path: string, body?: unknow
     return out({ dry_run: dry, created: 8, merged: 2, skipped: 1, errors: 1, columns: { 이름: "name", 이메일: "email", 회사명: "company_name" }, ignored_columns: ["비고2"],
       details: { created: [], merged: [], skipped: [], errors: [{ row: 11, error: "이메일 형식이 올바르지 않습니다" }] } });
   }
+
+  if (method === "GET" && p === "/admin/replies") {
+    const cls = q.get("classification"), by = q.get("handled_by");
+    const rows: ReplyRow[] = Object.values(db.details).flatMap((dd) => dd.replies.map((r) => ({ ...r, lead: brief(r.lead_id) })))
+      .filter((r) => (!cls || r.classification === cls) && (!by || r.handled_by === by)).sort((a, b2) => b2.received_at.localeCompare(a.received_at));
+    return out({ replies: rows });
+  }
+  if (method === "GET" && p === "/admin/approvals") return out({ approvals });
+  if (method === "GET" && p === "/admin/kb") return out({ docs: kbFromRuns() });
+  if (method === "GET" && p === "/admin/status") {
+    const s: SystemStatus = {
+      mode: { send: "sandbox", llm_default: "claude", providers: { claude: true, gemini: false } },
+      slack: { configured: false, signing_configured: false, channel: null, approvers: 0, notify_kinds: ["approval", "needs_human", "unsubscribe", "handoff", "followup", "call_due", "reminder"], web_url: null },
+      safeguards: { require_consent: false, max_sends_per_day: 50, sent_today: allMessages().filter((m) => m.status === "sent").length, sender_name: "노바웍스", sender_contact: "sales@novaworks.example" },
+      knowledge_docs: kbFromRuns().length,
+    };
+    return out(s);
+  }
+  if (method === "POST" && p === "/admin/notify-test") return out({ posted: false, reason: "시연 데이터에서는 Slack으로 보내지 않습니다" });
 
   if (method === "GET" && p === "/admin/metrics") {
     return out({ rows: [["승인", "승인 대기를 제외한 처리 건수", "4"], ["승인", "그대로 승인 / 수정 승인 / 반려", "2 / 1 / 1"], ["승인", "검토 시간 중앙값", "38초"],

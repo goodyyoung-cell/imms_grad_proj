@@ -3,7 +3,8 @@ import { Link, NavLink, Route, Routes, Navigate } from "react-router-dom";
 import { api } from "../../api/client";
 import { useQuery } from "../../api/hooks";
 import { useAuth } from "../../auth";
-import { ActivityPage, ApprovalsPage, Briefing, CallsPage, ExceptionsPage, ImportPage, LeadsPage, MetricsPage } from "./pages";
+import { ActivityPage, ApprovalsPage, Briefing, CallsPage, ExceptionsPage, HistoryPage, ImportPage, KbPage, LeadsPage, MetricsPage, RepliesPage, SettingsPage } from "./pages";
+import { QuickSearch } from "../../components/QuickSearch";
 
 /** 디자인 A: 업무함. 오늘 사람이 할 일을 종류별 목록에서 하나씩 처리한다. */
 export function DesignA() {
@@ -28,11 +29,16 @@ export function DesignA() {
         {link("/a/approvals", "승인 대기", d?.pending_approvals)}
         {link("/a/calls", "전화", d?.calls_due)}
         {link("/a/exceptions", "확인 필요", human)}
+        {link("/a/replies", "답장함")}
         <div className="nav-group">전체</div>
         {link("/a/leads", "리드")}
         {link("/a/activity", "에이전트 기록")}
+        {link("/a/history", "승인 이력")}
+        {link("/a/kb", "승인 자료")}
         {link("/a/metrics", "평가 지표")}
         {link("/a/import", "리드 올리기")}
+        {link("/a/settings", "설정·상태")}
+        <button className="nav-search" onClick={() => window.dispatchEvent(new KeyboardEvent("keydown", { key: "k", ctrlKey: true }))}>회사 검색 <kbd>/</kbd></button>
         <div className="sidebar-foot">
           {mock && <div className="mock-pill">시연 데이터</div>}
           <div className="who">{name}</div>
@@ -49,10 +55,15 @@ export function DesignA() {
           <Route path="leads/:id?" element={<LeadsPage />} />
           <Route path="activity" element={<ActivityPage />} />
           <Route path="metrics" element={<MetricsPage />} />
+          <Route path="replies/:id?" element={<RepliesPage />} />
+          <Route path="history" element={<HistoryPage />} />
+          <Route path="kb" element={<KbPage />} />
+          <Route path="settings" element={<SettingsPage />} />
           <Route path="import" element={<ImportPage />} />
           <Route path="*" element={<Navigate to="/a" replace />} />
         </Routes>
       </main>
+      <QuickSearch toLead={(id) => `/a/leads/${id}`} />
     </div>
   );
 }

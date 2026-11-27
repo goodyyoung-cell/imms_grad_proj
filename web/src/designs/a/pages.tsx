@@ -6,6 +6,8 @@ import { ApprovalPanel } from "../../components/ApprovalPanel";
 import { CallPanel } from "../../components/CallPanel";
 import { ImportPanel } from "../../components/ImportPanel";
 import { MetricsPanel } from "../../components/MetricsPanel";
+import { ApprovalHistoryPanel, RepliesPanel } from "../../components/HistoryPanels";
+import { KbPanel, StatusPanel } from "../../components/SettingsPanels";
 import { LeadDetailView } from "../../components/LeadDetailView";
 import { RunList } from "../../components/RunTrace";
 import { Badge, Card, Empty, ErrorBox, Loading, Score, StatusBadge } from "../../components/ui";
@@ -227,6 +229,30 @@ export function ActivityPage() {
 
 export function MetricsPage() {
   return <div className="page narrow"><header className="page-head"><h1>평가 지표</h1></header><MetricsPanel /></div>;
+}
+
+export function RepliesPage() {
+  const { id } = useParams();
+  return (
+    <SplitView
+      hasDetail={!!id}
+      listTitle={<><h2>답장함</h2><span className="muted small">고객이 보낸 답장과 에이전트의 분류</span></>}
+      list={<RepliesPanel toLead={(l) => `/a/replies/${l}`} activeLeadId={id} />}
+      detail={id ? <LeadDetailView key={id} leadId={id} /> : <div className="split-empty"><Empty title="왼쪽에서 답장을 고르세요">분류가 맞는지 확인하고, 필요하면 고객 상세에서 처리합니다.</Empty></div>}
+    />
+  );
+}
+
+export function HistoryPage() {
+  return <div className="page"><header className="page-head"><h1>승인 이력</h1><p className="muted">누가 언제 어떤 메일을 승인, 수정, 반려했는지 기록합니다. 행을 누르면 수정한 내용을 볼 수 있습니다.</p></header><ApprovalHistoryPanel /></div>;
+}
+
+export function KbPage() {
+  return <div className="page narrow"><header className="page-head"><h1>승인 자료</h1></header><KbPanel /></div>;
+}
+
+export function SettingsPage() {
+  return <div className="page"><header className="page-head"><h1>설정·상태</h1></header><StatusPanel /></div>;
 }
 
 export function ImportPage() {

@@ -169,3 +169,34 @@ fieldset { border: 0; padding: 0; margin: 0; } legend { font-size: .85rem; font-
 
 .approval-grid > *, .two-col > *, .form-grid > * { min-width: 0; }
 .mail-body { overflow-wrap: anywhere; }
+
+/* 확장 화면 */
+.checks { list-style: none; padding: 0; margin: 6px 0; display: grid; gap: 4px; font-size: .85rem; }
+.check { display: grid; grid-template-columns: 18px 1fr; gap: 6px; align-items: start; }
+.check-mark { display: inline-grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; font-size: .72rem; font-weight: 800; background: var(--panel2); color: var(--muted); }
+.check.ok .check-mark { background: var(--green-bg); color: var(--green); } .check.warn .check-mark { background: var(--amber-bg); color: var(--amber); }
+.check.warn { color: var(--text); }
+.kb-list details summary { cursor: pointer; } .kb-text { margin: 6px 0 2px; padding: 8px; background: var(--panel2); border-radius: 6px; font-size: .84rem; white-space: pre-wrap; }
+.kb-sections { list-style: none; padding: 0; display: grid; gap: 10px; } .kb-sections h5 { margin: 0 0 2px; color: var(--brand); } .kb-sections p { white-space: pre-wrap; margin: 0; }
+.next-action { border-radius: 8px; padding: 10px 14px; margin: 12px 0; background: var(--panel2); border-left: 4px solid var(--gray); }
+.next-action.blue { border-color: #2f7cf6; } .next-action.amber { border-color: #f79009; } .next-action.green { border-color: #12b76a; } .next-action.red { border-color: #f04438; } .next-action.violet { border-color: #7a5af8; }
+.reply-list { list-style: none; padding: 0; margin: 10px 0; display: grid; gap: 8px; }
+.reply-row { display: grid; gap: 4px; padding: 10px 14px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; color: var(--text); }
+.reply-row:hover { text-decoration: none; border-color: var(--brand); } .reply-row.on { border-color: var(--brand); background: var(--brand-soft); }
+.reply-badges { display: inline-flex; gap: 6px; } .reply-row .quote { margin: 2px 0; }
+.shell-a .split-list-body .replies { padding: 10px 12px; } .shell-a .split-list-body .reply-list { margin: 8px 0; }
+.stat-row { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-bottom: 14px; }
+.stat { display: grid; padding: 10px 16px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; min-width: 110px; } .stat b { font-size: 1.4rem; } .stat span { color: var(--muted); font-size: .78rem; }
+.table tr.clickable { cursor: pointer; } .table tr.clickable:hover { background: var(--panel2); }
+.diff { font: .82rem/1.55 ui-monospace, "Cascadia Mono", monospace; background: var(--panel2); border-radius: 8px; padding: 8px 0; margin: 6px 0; }
+.diff-line { display: grid; grid-template-columns: 22px 1fr; white-space: pre-wrap; padding: 0 10px; } .diff-mark { color: var(--muted); }
+.diff-line.add { background: var(--green-bg); color: var(--green); } .diff-line.del { background: var(--red-bg); color: var(--red); text-decoration: line-through; }
+.kv { display: grid; grid-template-columns: 110px 1fr; gap: 8px 12px; margin: 0; } .kv dt { color: var(--muted); font-size: .85rem; } .kv dd { margin: 0; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.gauge { display: inline-block; width: 120px; height: 6px; background: var(--panel2); border-radius: 3px; overflow: hidden; margin-left: 8px; } .gauge i { display: block; height: 100%; background: var(--brand); }
+.qs-wrap { position: fixed; inset: 0; z-index: 80; display: grid; justify-items: center; align-items: start; padding-top: 12vh; }
+.qs-scrim { position: absolute; inset: 0; background: rgba(2, 6, 16, .45); }
+.qs { position: relative; width: min(560px, 92vw); background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 20px 60px rgba(0,0,0,.35); padding: 10px; }
+.qs ul { list-style: none; padding: 0; margin: 8px 0 0; } .qs li button { width: 100%; display: flex; align-items: center; gap: 8px; text-align: left; background: none; border: 0; border-radius: 8px; padding: 8px 10px; font: inherit; color: inherit; cursor: pointer; }
+.qs li button.on { background: var(--brand-soft); } .qs-right { margin-left: auto; display: inline-flex; gap: 8px; align-items: center; } .qs-none { padding: 8px 10px; }
+.nav-search { margin: 14px 10px 0; display: flex; justify-content: space-between; align-items: center; background: #1d2939; border: 1px solid #344054; color: #98a2b3; border-radius: 8px; padding: 7px 10px; font: inherit; font-size: .85rem; cursor: pointer; }
+.shell-a .nav-search kbd { border-color: #475467; }

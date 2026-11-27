@@ -1,10 +1,11 @@
 import { domainOf } from "../lib/format";
 import { FACT_FIELD, kbLabel, SCORE_PART, SOURCE_TYPE } from "../lib/labels";
-import type { Citation, Fact, Score } from "../types";
+import type { Citation, Fact, KbDoc, Score } from "../types";
 
 /** 메일이 어떤 근거로 쓰였는지. 사실은 출처 링크와 함께, 승인된 자료는 문서 이름으로 보여 준다. */
-export function Evidence({ citations, facts }: { citations: Citation[]; facts: Fact[] }) {
+export function Evidence({ citations, facts, kbDocs }: { citations: Citation[]; facts: Fact[]; kbDocs?: KbDoc[] }) {
   const byId = new Map(facts.map((f) => [f.id, f]));
+  const sections = new Map((kbDocs ?? []).flatMap((d) => d.sections.map((s) => [s.id, s.text] as const)));
   const used = citations.filter((c) => c.type === "fact").map((c) => byId.get(c.id)).filter((f): f is Fact => !!f);
   const kb = [...new Set(citations.filter((c) => c.type === "kb").map((c) => c.id))];
   const missing = citations.filter((c) => c.type === "fact" && !byId.has(c.id)).length;
@@ -21,7 +22,12 @@ export function Evidence({ citations, facts }: { citations: Citation[]; facts: F
       {kb.length > 0 && (
         <>
           <h5>승인된 회사 자료</h5>
-          <ul className="kb-list">{kb.map((id) => <li key={id}>{kbLabel(id)}</li>)}</ul>
+          <ul className="kb-list">{kb.map((id) => (
+            <li key={id}>
+              {sections.get(id)
+                ? <details><summary>{kbLabel(id)}</summary><p className="kb-text">{sections.get(id)}</p></details>
+                : kbLabel(id)}
+            </li>))}</ul>
         </>
       )}
     </div>
