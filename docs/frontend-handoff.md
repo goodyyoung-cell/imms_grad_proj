@@ -124,12 +124,17 @@ POST /auth/login
 
 화면만 만들 때는 배포된 API를 쓰면 되고, 백엔드를 고칠 때만 필요하다.
 
+GCP 프로젝트 `gen-lang-client-0136144273`에 개발 권한이 있으면(Cloud Run 배포·로그 보기·Secret Manager 읽기·Scheduler 관리) 키를 메신저로 받을 필요 없이 `.env`를 만들 수 있다.
+
 ```bash
+gcloud auth login && gcloud config set project gen-lang-client-0136144273
 python -m venv .venv && source .venv/bin/activate && pip install -e ".[dev]"
-cp .env.example .env     # 키는 팀원에게 따로 받는다
+python scripts/pull_env.py              # 배포된 Cloud Run 설정·Secret Manager에서 .env 생성 (키는 화면에 안 나옴)
 uvicorn sdr_agent.app:app --reload     # http://localhost:8000/docs
 pytest                                  # 키 없이 도는 테스트
 ```
+
+`.env`는 실제 Supabase와 실제 LLM 키를 쓴다. 로컬에서 돌린 작업도 같은 DB에 남고 LLM 비용이 든다.
 
 ## 지켜야 할 것 (CLAUDE.md 요약)
 
