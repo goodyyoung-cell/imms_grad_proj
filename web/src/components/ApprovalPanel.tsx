@@ -78,7 +78,7 @@ export function ApprovalPanel({ message, onDecided, shortcuts = false }: Props) 
     if (missing && !kb.error) return null;
     return kb.error ? null : [...facts, ...kbText, lead?.company_name ?? "", lead?.name ?? ""];
   }, [d, kb.data, kb.error, kbReady, message.citations, lead]);
-  const checks = complianceChecks(message.subject, body, support);
+  const checks = complianceChecks(body, support);
 
   return (
     <div className="approval">

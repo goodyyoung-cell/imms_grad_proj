@@ -1,6 +1,6 @@
 """광고성 메일의 표시 의무 (정보통신망법 제50조 제4항, 시행령 제61조 별표 6).
 
-- 제목 맨 앞에 "(광고)"를 붙인다.
+- 제목 맨 앞에 "(광고)"를 붙이는 것은 AD_PREFIX=true일 때만 한다 (기본 끔, 팀 결정).
 - 본문에 전송자의 명칭과 연락처, 수신 거부·동의 철회 방법을 밝힌다. 수신 거부 안내는 한글과 영문을 함께 적는다.
 - 수신 거부는 로그인 없이 한 번에 할 수 있어야 한다 → PUBLIC_BASE_URL이 있으면 리드별 수신 거부 링크를 넣는다.
   (링크는 서명한 주소이고, 메일 보안 검사기가 미리 열어도 거부되지 않도록 열기만 해서는 처리하지 않고 버튼을 한 번 누르게 한다.)
@@ -64,7 +64,8 @@ def apply_footer(body: str, s: Settings, lead_id: str | None) -> str:
 
 
 def finalize(subject: str, body: str, s: Settings, lead_id: str | None) -> tuple[str, str]:
-    return ensure_ad_subject(subject), apply_footer(body, s, lead_id)
+    subject = ensure_ad_subject(subject) if s.ad_prefix else (subject or "").strip()
+    return subject, apply_footer(body, s, lead_id)
 
 
 def _page(title: str, body: str) -> str:

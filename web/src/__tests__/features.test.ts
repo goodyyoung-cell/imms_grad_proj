@@ -8,12 +8,11 @@ import type { Approval, KbDoc, LeadDetail, ReplyRow, SystemStatus } from "../typ
 describe("발송 전 점검", () => {
   const good = "안녕하세요.\n비즈니스는 59,000원입니다.\n이 메일은 AI의 도움을 받아 작성되었습니다.\n더 이상 원하지 않으시면 수신 거부라고 답장해 주세요.";
   it("규정 문구가 모두 있으면 통과한다", () => {
-    const c = complianceChecks("(광고) 노바데스크 안내", good, ["비즈니스 59,000원"]);
+    const c = complianceChecks(good, ["비즈니스 59,000원"]);
     expect(c.every((x) => x.state === "ok")).toBe(true);
   });
-  it("(광고) 표시와 수신 거부 문구가 없으면 경고한다", () => {
-    const c = complianceChecks("노바데스크 안내", "안녕하세요", ["x"]);
-    expect(c.find((x) => x.key === "ad")?.state).toBe("warn");
+  it("수신 거부 안내와 AI 고지가 없으면 경고한다", () => {
+    const c = complianceChecks("안녕하세요", ["x"]);
     expect(c.find((x) => x.key === "optout")?.state).toBe("warn");
     expect(c.find((x) => x.key === "ai")?.state).toBe("warn");
   });
@@ -22,7 +21,7 @@ describe("발송 전 점검", () => {
     expect(unsupportedNumbers("월 29,000원이고 30% 할인", ["스타터 29,000원"])).toEqual(["30%"]);
   });
   it("근거 자료를 못 불러오면 수치 점검을 보류한다", () => {
-    expect(complianceChecks("(광고) a", good, null).find((x) => x.key === "numbers")?.state).toBe("info");
+    expect(complianceChecks(good, null).find((x) => x.key === "numbers")?.state).toBe("info");
   });
 });
 

@@ -16,11 +16,8 @@ export function unsupportedNumbers(body: string, support: string[]): string[] {
 }
 
 /** 발송 전에 사람이 놓치기 쉬운 규정·근거 항목을 기계적으로 점검한다 (최종 판단은 담당자) */
-export function complianceChecks(subject: string, body: string, support: string[] | null): Check[] {
+export function complianceChecks(body: string, support: string[] | null): Check[] {
   const checks: Check[] = [];
-  checks.push(/^\s*\(광고\)/.test(subject)
-    ? { key: "ad", label: "제목에 (광고) 표시", state: "ok" }
-    : { key: "ad", label: "제목에 (광고) 표시가 없습니다", state: "warn", detail: "광고성 정보 메일은 제목에 (광고)를 붙여야 합니다. 서버 설정을 확인하세요." });
   checks.push(/수신\s?거부|unsubscribe/i.test(body)
     ? { key: "optout", label: "수신 거부 방법 안내", state: "ok" }
     : { key: "optout", label: "수신 거부 방법이 없습니다", state: "warn", detail: "본문에 수신 거부 방법이 있어야 합니다." });

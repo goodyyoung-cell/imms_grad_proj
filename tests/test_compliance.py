@@ -53,11 +53,17 @@ def test_unsubscribe_token_is_per_lead_and_secret():
     assert not compliance.unsubscribe_token_ok(settings(job_token=None), "L1", t)
 
 
-def test_draft_job_adds_ad_prefix_and_compliance_footer():
+def test_draft_job_adds_compliance_footer_and_no_ad_prefix_by_default():
     repo = FakeRepo([{**LEAD, "status": "researched"}])
     out = jobs.draft_emails(["L1"], repo=repo, llm=good_draft_llm(), settings=settings())
     m = repo.messages[out[0]["message_id"]]
-    assert m["subject"].startswith("(광고) ") and "unsubscribe" in m["body"] and "/unsubscribe/L1/" in m["body"]
+    assert not m["subject"].startswith("(광고)") and "unsubscribe" in m["body"] and "/unsubscribe/L1/" in m["body"]
+
+
+def test_draft_job_adds_ad_prefix_when_enabled():
+    repo = FakeRepo([{**LEAD, "status": "researched"}])
+    out = jobs.draft_emails(["L1"], repo=repo, llm=good_draft_llm(), settings=settings(ad_prefix=True))
+    assert repo.messages[out[0]["message_id"]]["subject"].startswith("(광고) ")
 
 
 # --- 수신 거부 링크 ---
@@ -144,7 +150,7 @@ def test_record_consent_requires_a_note_and_enables_sending():
     assert jobs.send_message(mid, repo=repo, settings=settings(require_consent_to_send=True))["status"] == "sent"
 
 
-def test_reply_answer_draft_gets_ad_prefix_and_footer(monkeypatch):
+def test_reply_answer_draft_gets_footer(monkeypatch):
     repo = FakeRepo([{**LEAD, "status": "contacted"}])
     triage = {"classification": "question", "confidence": 0.9, "reason": "r", "action": "answer_draft", "by": "llm",
               "run_id": None, "answer": {"subject": "Re: 문의", "body": "답변입니다", "citations": []}}
@@ -152,7 +158,7 @@ def test_reply_answer_draft_gets_ad_prefix_and_footer(monkeypatch):
     monkeypatch.setattr(jobs, "get_llm", lambda *a, **kw: None)
     out = jobs.handle_reply("가격이 궁금합니다", lead_id="L1", repo=repo, settings=settings())
     m = repo.messages[out["message_id"]]
-    assert m["subject"].startswith("(광고) ") and "/unsubscribe/L1/" in m["body"] and "발신: 노바웍스" in m["body"]
+    assert not m["subject"].startswith("(광고)") and "/unsubscribe/L1/" in m["body"] and "발신: 노바웍스" in m["body"]
 
 
 def test_edited_approval_gets_footer_with_sender_line():

@@ -113,7 +113,7 @@ AI가 초기 영업 단계(Top of Funnel)의 반복적인 접촉·응대·선별
 │   ├── outbox.py        # 메일 발송 (지금은 샌드박스만. 도구가 아님)
 │   ├── notify.py        # 사람에게 알림 (로그 + Slack, 실패해도 흐름을 멈추지 않음)
 │   ├── slack.py         # Slack 승인 채널: 서명 검증, 메시지 블록, 버튼·모달 처리
-│   ├── compliance.py    # 광고성 메일 표시((광고), 영문 수신 거부, 전송자), 수신 거부 링크 토큰
+│   ├── compliance.py    # 메일 하단 안내(영문 수신 거부, 전송자), (광고) 표시는 AD_PREFIX로 선택, 수신 거부 링크 토큰
 │   ├── metrics.py       # 평가 지표 계산 (순수 함수. /admin/metrics)
 │   ├── scoring.py       # 규칙 기반 리드 점수
 │   ├── db.py            # Supabase 접근
