@@ -22,6 +22,7 @@ from typing import Any, Callable
 
 from .agent import MemoryRunLog, RunLog, SupabaseRunLog
 from .config import Settings, load_settings
+from .compliance import apply_footer, finalize
 from .db import Repo, get_client
 from .intake import ingest
 from .llm import get_llm
@@ -30,7 +31,7 @@ from .notify import notify
 from .outbox import Sender, get_sender
 from .toolkit.dart import DartClient
 from .toolkit.news import GoogleNewsClient, NaverNewsClient
-from .workflows.draft import FOOTER, compose_body, run_draft
+from .workflows.draft import compose_body, run_draft
 from .workflows.call_script import render_text as render_call_script
 from .workflows.call_script import run_call_script, sent_phrase
 from .workflows.handoff import render_text, run_handoff
@@ -170,7 +171,8 @@ def draft_emails(
                 out.append({"lead_id": lead_id, "status": "no_draft", "run_id": result["run_id"],
                             "stop_reason": result["stop_reason"]})
                 continue
-            msg = repo.insert_message(lead_id, result["run_id"], "initial", result["draft"])
+            subject, body = finalize(result["draft"]["subject"], result["draft"]["body"], s, lead_id)
+            msg = repo.insert_message(lead_id, result["run_id"], "initial", {**result["draft"], "subject": subject, "body": body})
             repo.set_status(lead_id, "awaiting_approval")
             notify("approval", f"메일 승인 요청: {lead.get('company_name')} ({msg['id']})",
                    f"제목: {msg['subject']}\n\n{msg['body']}", message_id=msg["id"], lead_id=lead_id,
@@ -230,10 +232,10 @@ def decide_message(
 
     fields: dict[str, Any] = {"status": "approved"}
     if decision == "edited":
-        # 사람이 고쳐도 AI 사용 고지와 수신 거부 안내는 빠질 수 없다
-        fields["body"] = edited_body if FOOTER.strip() in edited_body else edited_body.rstrip() + FOOTER
+        # 사람이 고쳐도 AI 사용 고지, 수신 거부 안내, 전송자 정보는 빠질 수 없다
+        fields["body"] = apply_footer(edited_body, s, msg["lead_id"])
     repo.update_message(message_id, fields)
-    out = send_message(message_id, repo=repo, sender=sender)
+    out = send_message(message_id, repo=repo, sender=sender, settings=s)
     if out["status"] == "sent" and msg["kind"] == "initial":
         try:
             out["call_task"] = create_call_task(message_id, settings=s, repo=repo, llm=llm, new_log=new_log)
@@ -243,8 +245,10 @@ def decide_message(
     return out
 
 
-def send_message(message_id: str, *, repo: Any, sender: Sender | None = None) -> dict[str, Any]:
+def send_message(message_id: str, *, repo: Any, sender: Sender | None = None,
+                 settings: Settings | None = None) -> dict[str, Any]:
     """승인된 메시지를 보낸다. 수신 거부·미승인은 여기서 한 번, DB 트리거에서 한 번 더 막는다."""
+    s = settings or load_settings()
     msg = repo.get_message(message_id)
     lead = repo.get_lead(msg["lead_id"])
     if lead.get("unsubscribed_at"):
@@ -252,12 +256,35 @@ def send_message(message_id: str, *, repo: Any, sender: Sender | None = None) ->
         return {"message_id": message_id, "status": "cancelled", "reason": "수신 거부"}
     if msg["status"] != "approved":
         raise ValueError(f"승인되지 않은 메시지는 보낼 수 없습니다 (status={msg['status']})")
+    if s.require_consent_to_send and not lead.get("consent_at"):
+        repo.update_message(message_id, {"status": "cancelled"})
+        return {"message_id": message_id, "status": "cancelled", "reason": "수신 동의 기록 없음"}
     if not lead.get("email"):
         raise ValueError("리드에 이메일 주소가 없습니다")
+    if s.max_sends_per_day > 0 and repo.count_sent_since(_start_of_day_utc()) >= s.max_sends_per_day:
+        raise ValueError(f"오늘 발송 한도({s.max_sends_per_day}건)에 도달했습니다. 내일 다시 보내거나 한도를 조정하세요.")
     provider_id = (sender or get_sender()).send(lead["email"], msg["subject"], msg["body"])
     repo.update_message(message_id, {"status": "sent", "provider_message_id": provider_id})
     repo.set_status(msg["lead_id"], "contacted")
     return {"message_id": message_id, "status": "sent", "provider_message_id": provider_id}
+
+
+def _start_of_day_utc() -> str:
+    """하루 발송 상한을 세는 기준 (한국 시간 자정)."""
+    return datetime.now(KST).replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc).isoformat()
+
+
+def record_consent(lead_id: str, note: str, recorded_by: str, *, repo: Any = None,
+                   settings: Settings | None = None) -> dict:
+    """담당자가 직접 확인한 수신 동의를 남긴다 (예: 세미나 현장 서면 동의). 근거 메모가 필수다."""
+    if not (note and note.strip()):
+        raise ValueError("동의를 어떻게 확인했는지 적어 주세요")
+    s = settings or load_settings()
+    repo, _ = _wire(s, repo, None)
+    repo.get_lead(lead_id)
+    stamp = f"{note.strip()} (기록: {recorded_by})"
+    repo.update_lead(lead_id, {"consent_at": datetime.now(timezone.utc).isoformat(), "consent_note": stamp})
+    return {"lead_id": lead_id, "consent_note": stamp}
 
 
 def handle_reply(
@@ -322,6 +349,7 @@ def handle_reply(
                                       settings=s, repo=repo, llm=llm, new_log=new_log)
     elif action == "answer_draft":
         answer = {**triage["answer"], "body": compose_body(triage["answer"]["body"], s.booking_url)}
+        answer["subject"], answer["body"] = finalize(answer["subject"], answer["body"], s, lead_id)
         msg = repo.insert_message(lead_id, triage["run_id"], "followup", answer)
         repo.set_status(lead_id, "awaiting_approval")
         notify("approval", f"답변 승인 요청: {lead.get('company_name')} ({msg['id']})",

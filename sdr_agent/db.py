@@ -115,6 +115,13 @@ class Repo:
     def insert_approval(self, row: dict) -> None:
         self.c.table("approvals").insert(row).execute()
 
+    def count_sent_since(self, since_iso: str) -> int:
+        res = self.c.table("messages").select("id", count="exact").eq("status", "sent").gte("sent_at", since_iso).execute()
+        return res.count or 0
+
+    def update_lead(self, lead_id: str, fields: dict) -> dict:
+        return self.c.table("leads").update(fields).eq("id", lead_id).execute().data[0]
+
     # --- 평가 지표 (관리 화면의 /admin/metrics) ---
 
     def list_all_approvals(self, limit: int = 5000) -> list[dict]:

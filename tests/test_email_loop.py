@@ -116,6 +116,13 @@ class FakeRepo:
     def insert_approval(self, row):
         self.approvals.append(row)
 
+    def count_sent_since(self, since_iso):
+        return sum(1 for m in self.messages.values() if m["status"] == "sent")
+
+    def update_lead(self, lead_id, fields):
+        self.leads[lead_id].update(fields)
+        return dict(self.leads[lead_id])
+
     def insert_reply(self, row):
         r = {"id": self._id("R"), "received_at": NOW, **row}
         self.replies.append(r)
@@ -240,7 +247,7 @@ def test_edited_approval_keeps_mandatory_footer(repo):
     [r] = jobs.draft_emails(repo=repo, llm=good_draft_llm())
     jobs.decide_message(r["message_id"], "edited", "담당자A", edited_body="짧게 고친 본문", repo=repo, sender=sender)
     body = sender.sent[0]["body"]
-    assert body.startswith("짧게 고친 본문") and body.endswith(FOOTER)
+    assert body.startswith("짧게 고친 본문") and FOOTER in body and 'reply "unsubscribe"' in body  # 광고 표시 의무로 안내가 늘었다
 
 
 def test_reject_does_not_send(repo):
@@ -274,7 +281,7 @@ def test_question_reply_creates_followup_awaiting_approval(repo):
     out = jobs.handle_reply("카카오톡 채널도 되나요?", lead_id="L1", repo=repo, llm=llm)
     assert out["action"] == "answer_draft"
     msg = repo.messages[out["message_id"]]
-    assert msg["kind"] == "followup" and msg["status"] == "pending_approval" and msg["body"].endswith(FOOTER)
+    assert msg["kind"] == "followup" and msg["status"] == "pending_approval" and FOOTER in msg["body"]
     assert repo.replies[0]["classification"] == "question" and repo.replies[0]["handled_by"] == "agent"
 
 

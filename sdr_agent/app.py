@@ -4,7 +4,7 @@
 - 외부 이벤트(답장 도착, 외부 폼)는 /webhooks/* 로 들어온다
 - 관리 화면(프론트엔드)은 /auth/login 으로 로그인한 뒤 /admin/* 을 부른다 (docs/frontend-handoff.md)
 
-인증 (공개 URL이라 /health, /form, /webhooks/slack/interactions 말고는 모두 필요)
+인증 (공개 URL이라 /health, /form, /unsubscribe/*, /webhooks/slack/interactions 말고는 모두 필요)
 - 관리 화면: POST /auth/login {name, password=ADMIN_PASSWORD} → `Authorization: Bearer adm.…` (8시간)
 - 예약 실행·CLI·외부 서버: `Authorization: Bearer <JOB_TOKEN>`
 - Slack 버튼: Bearer 대신 Slack 서명(SLACK_SIGNING_SECRET)으로 검증한다
@@ -26,8 +26,9 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
 
 from . import auth as admin_auth
-from . import jobs, metrics, sheets, slack, webform
+from . import compliance, jobs, metrics, sheets, slack, webform
 from .config import load_settings
+from .notify import notify
 from .db import Repo, get_client
 from .workflows.call_script import render_text as render_call_script
 
@@ -114,6 +115,39 @@ def me(p: admin_auth.Principal = Depends(principal)) -> dict:
 @app.get("/health")
 def health() -> dict:
     return {"ok": True}
+
+
+# --- 수신 거부: 메일 하단 링크. 로그인 없이 한 번에 처리한다 (정보통신망법 제50조 제4항) ---
+
+def _unsub_action(lead_id: str, token: str) -> str:
+    return f"/unsubscribe/{lead_id}/{token}"
+
+
+@app.get("/unsubscribe/{lead_id}/{token}", response_class=HTMLResponse)
+def unsubscribe_page(lead_id: str, token: str) -> HTMLResponse:
+    # 메일 보안 검사기가 링크를 미리 열어도 거부되지 않도록, 열기만 해서는 처리하지 않고 버튼을 누르게 한다
+    if not compliance.unsubscribe_token_ok(load_settings(), lead_id, token):
+        raise HTTPException(404)
+    return HTMLResponse(compliance.unsubscribe_confirm_page(_unsub_action(lead_id, token)))
+
+
+@app.post("/unsubscribe/{lead_id}/{token}", response_class=HTMLResponse)
+def unsubscribe_do(lead_id: str, token: str, request: Request, repo: Repo = Depends(get_repo)) -> HTMLResponse:
+    s = load_settings()
+    if not compliance.unsubscribe_token_ok(s, lead_id, token):
+        raise HTTPException(404)
+    ip = (request.headers.get("x-forwarded-for") or (request.client.host if request.client else "")).split(",")[0].strip()
+    if not webform.allow(f"unsub:{ip}"):
+        return HTMLResponse(compliance.unsubscribe_confirm_page(_unsub_action(lead_id, token)), status_code=429)
+    try:
+        lead = repo.get_lead(lead_id)
+    except LookupError:
+        return HTMLResponse(compliance.unsubscribed_page())  # 없는 리드여도 같은 화면 (존재 여부를 알려 주지 않는다)
+    if not lead.get("unsubscribed_at"):
+        repo.unsubscribe(lead_id)  # DB 트리거가 보내지 않은 메시지와 걸지 않은 전화를 모두 취소한다
+        notify("unsubscribe", f"수신 거부: {lead.get('company_name')}",
+               "메일의 수신 거부 링크로 접수했습니다. 모든 발송을 중단했습니다.", lead_id=lead_id, settings=s)
+    return HTMLResponse(compliance.unsubscribed_page())
 
 
 # --- 리드 유입 1: 웹사이트 폼 ---
@@ -450,6 +484,22 @@ def admin_unsubscribe(lead_id: str, u: UnsubscribeConfirm, p: admin_auth.Princip
         return jobs.confirm_unsubscribe(lead_id, who(u.decided_by, p), note=u.note)
     except LookupError as exc:
         raise HTTPException(404, str(exc))
+
+
+class ConsentRecord(BaseModel):
+    note: str  # 동의를 어떻게 확인했는지 (예: 세미나 현장 서면 동의)
+
+
+@app.post("/admin/leads/{lead_id}/consent")
+def admin_consent(lead_id: str, c: ConsentRecord, p: admin_auth.Principal = Depends(principal),
+                  repo: Repo = Depends(get_repo)) -> dict:
+    """담당자가 직접 확인한 수신 동의 근거를 남긴다. REQUIRE_CONSENT_TO_SEND가 켜져 있으면 이 기록이 있어야 발송된다."""
+    try:
+        return jobs.record_consent(lead_id, c.note, who(None, p), repo=repo)
+    except LookupError as exc:
+        raise HTTPException(404, str(exc))
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
 
 
 class CallOutcome(BaseModel):

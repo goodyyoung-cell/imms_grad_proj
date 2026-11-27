@@ -53,7 +53,12 @@ class Settings:
     slack_notify_kinds: tuple[str, ...] = ("approval", "needs_human", "unsubscribe", "handoff", "followup",
                                            "call_due", "reminder")
     admin_web_url: str | None = None         # 관리 웹(React) 주소. 알림의 딥링크 기준. 끝에 / 없음
-    reminder_hours: int = 4                  # 승인 대기가 이 시간을 넘으면 /jobs/remind 가 알린다
+    reminder_hours: int = 4
+    public_base_url: str | None = None       # 이 백엔드의 공개 주소. 메일 하단 수신 거부 링크에만 쓴다 (Cloud Run 주소)
+    sender_name: str | None = "노바웍스"      # 메일 하단에 밝히는 전송자 명칭 (정보통신망법 제50조 제4항)
+    sender_contact: str | None = None        # 전송자 연락처 (전화·주소·회신 가능한 이메일)
+    max_sends_per_day: int = 50              # 하루 발송 상한. 사고가 났을 때 피해를 줄인다 (0이면 제한 없음)
+    require_consent_to_send: bool = False    # True면 수신 동의 기록이 없는 리드에게는 보내지 않는다 (실발송 때 켠다)                  # 승인 대기가 이 시간을 넘으면 /jobs/remind 가 알린다
 
 
 def load_settings() -> Settings:
@@ -87,4 +92,9 @@ def load_settings() -> Settings:
                                 "approval,needs_human,unsubscribe,handoff,followup,call_due,reminder"),
         admin_web_url=(_get("ADMIN_WEB_URL") or "").rstrip("/") or None,
         reminder_hours=int(_get("REMINDER_HOURS", "4")),
+        public_base_url=(_get("PUBLIC_BASE_URL") or "").rstrip("/") or None,
+        sender_name=_get("SENDER_NAME", "노바웍스"),
+        sender_contact=_get("SENDER_CONTACT"),
+        max_sends_per_day=int(_get("MAX_SENDS_PER_DAY", "50")),
+        require_consent_to_send=_get("REQUIRE_CONSENT_TO_SEND", "false").lower() in ("1", "true", "yes"),
     )
