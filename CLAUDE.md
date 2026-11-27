@@ -118,7 +118,7 @@ AI가 초기 영업 단계(Top of Funnel)의 반복적인 접촉·응대·선별
 │   ├── scoring.py       # 규칙 기반 리드 점수
 │   ├── db.py            # Supabase 접근
 │   ├── jobs.py          # 예약·이벤트 실행 단위 (app과 cli가 공유)
-│   ├── app.py           # Cloud Run 웹 서버 (/jobs/*, /webhooks/*, /admin/*, /unsubscribe/*)
+│   ├── app.py           # Cloud Run 웹 서버 (/jobs/*, /webhooks/*, /admin/* 조회·상태·연결 시험 포함, /unsubscribe/*)
 │   └── cli.py           # 로컬 실행
 ├── data/sample/         # 평가용 리드(leads.json), 모의 답장(replies.json), 업로드 양식(leads_template.csv)
 ├── supabase/migrations/ # DB 스키마 (SQL)

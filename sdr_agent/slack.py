@@ -36,6 +36,7 @@ KIND_LABEL = {
     "reminder": "승인 대기 알림",
     "call_due": "전화 팔로업 시각",
     "call": "전화 팔로업 예정",
+    "test": "연결 시험",
 }
 
 
@@ -155,7 +156,7 @@ def approval_blocks(data: dict, message_id: str, base_url: str | None) -> list[d
 
 def notice_blocks(kind: str, title: str, text: str, url: str | None = None) -> list[dict]:
     blocks: list[dict] = [
-        {"type": "header", "text": _plain(f"{KIND_LABEL.get(kind, kind)}: {title}", 150)},
+        {"type": "header", "text": _plain(title if title == KIND_LABEL.get(kind) else f"{KIND_LABEL.get(kind, kind)}: {title}", 150)},
     ]
     if text:
         blocks.append({"type": "section", "text": _plain(text)})

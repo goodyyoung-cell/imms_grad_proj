@@ -73,8 +73,9 @@ jobs.py --notify()--> Slack 채널 (승인 요청, 사람 확인 필요, 수신 
      --update-env-vars SLACK_CHANNEL=<채널 ID>,SLACK_APPROVERS=<사용자 ID>,ADMIN_WEB_URL=https://<관리 웹 주소>,PUBLIC_BASE_URL=https://<CLOUD_RUN_URL>
    ```
    `SLACK_APPROVERS`의 쉼표는 `--update-env-vars`에서 구분자와 겹치므로 `gcloud topic escaping`의 방식으로 구분자를 바꾸거나 콘솔에서 넣는다.
-5. 시연 때는 첫 요청이 느리지 않도록 `--min-instances 1`을 권한다. Slack은 3초 안에 응답을 받아야 하는데, 콜드 스타트가 길면 버튼이 "실패"로 보일 수 있다 (처리는 이어서 끝나고 결과는 메시지에 반영된다).
-6. 관리 웹이 다른 주소에서 뜨면 `ALLOWED_ORIGINS`에 그 주소를 넣는다 (CORS). Slack 경로는 브라우저가 부르지 않으므로 CORS와 무관하다.
+5. 연결 시험: 관리 웹에 로그인한 뒤 `POST /admin/notify-test`를 부르면 채널에 "연결 시험" 메시지가 올라온다 (`SLACK_NOTIFY_KINDS`에 없어도 보낸다). 응답의 `posted`가 false이면 `reason`에 이유가 적힌다. `GET /admin/status`로 토큰·서명·채널·승인자 설정 여부를 값 노출 없이 확인할 수 있다. 사용자당 1분에 5회까지다.
+6. 시연 때는 첫 요청이 느리지 않도록 `--min-instances 1`을 권한다. Slack은 3초 안에 응답을 받아야 하는데, 콜드 스타트가 길면 버튼이 "실패"로 보일 수 있다 (처리는 이어서 끝나고 결과는 메시지에 반영된다).
+7. 관리 웹이 다른 주소에서 뜨면 `ALLOWED_ORIGINS`에 그 주소를 넣는다 (CORS). Slack 경로는 브라우저가 부르지 않으므로 CORS와 무관하다.
 
 ## 5. 환경변수
 

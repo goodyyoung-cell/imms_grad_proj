@@ -28,6 +28,7 @@ from pydantic import BaseModel
 from . import auth as admin_auth
 from . import compliance, jobs, metrics, sheets, slack, webform
 from .config import load_settings
+from .kb import default_kb
 from .notify import notify
 from .db import Repo, get_client
 from .workflows.call_script import render_text as render_call_script
@@ -407,6 +408,89 @@ def admin_run_detail(run_id: str, repo: Repo = Depends(get_repo)) -> dict:
         return repo.get_run(run_id)
     except LookupError as exc:
         raise HTTPException(404, str(exc))
+
+
+REPLY_CLASSES = ("interested", "question", "not_now", "not_decision_maker", "out_of_office", "unsubscribe", "unclear")
+
+
+@app.get("/admin/replies", dependencies=auth)
+def admin_replies(classification: str | None = None, handled_by: str | None = None, limit: int = 100,
+                  repo: Repo = Depends(get_repo)) -> dict:
+    """받은 답장 목록 (최근 순). classification, handled_by(agent | human)로 거른다. 리드 요약(lead) 포함."""
+    if classification and classification not in REPLY_CLASSES:
+        raise HTTPException(400, f"classification은 {list(REPLY_CLASSES)} 중 하나여야 합니다")
+    if handled_by and handled_by not in ("agent", "human"):
+        raise HTTPException(400, "handled_by는 agent 또는 human이어야 합니다")
+    rows = repo.list_recent_replies(classification=classification or None, handled_by=handled_by or None,
+                                    limit=max(1, min(limit, 200)))
+    return {"replies": _with_lead(rows, repo)}
+
+
+@app.get("/admin/approvals", dependencies=auth)
+def admin_approvals(limit: int = 200, repo: Repo = Depends(get_repo)) -> dict:
+    """승인·반려 기록 (최근 순). 각 기록에 대상 메일(message)과 리드 요약(lead) 포함."""
+    rows = repo.list_recent_approvals(limit=max(1, min(limit, 500)))
+    messages = repo.messages_by_ids([r.get("message_id") for r in rows])
+    leads = repo.leads_by_ids([m.get("lead_id") for m in messages.values()])
+    out = []
+    for r in rows:
+        m = messages.get(r.get("message_id"))
+        out.append({
+            "id": r.get("id"), "message_id": r.get("message_id"), "decision": r.get("decision"),
+            "decided_by": r.get("decided_by"), "decided_at": r.get("decided_at"), "note": r.get("note"),
+            "reason_code": r.get("reason_code"), "original_body": r.get("original_body"),
+            "review_seconds": r.get("review_seconds"), "channel": r.get("channel"),
+            "message": m, "lead": leads.get(m.get("lead_id")) if m else None,
+        })
+    return {"approvals": out}
+
+
+@app.get("/admin/kb", dependencies=auth)
+def admin_kb() -> dict:
+    """에이전트가 인용할 수 있는 승인된 회사 자료. 메일 근거 표시의 id(예: 02_pricing#플랜)가 여기 section id와 같다."""
+    docs: dict[str, dict] = {}
+    for c in default_kb().chunks:
+        doc_id = c.id.split("#", 1)[0]
+        doc = docs.setdefault(doc_id, {"id": doc_id, "title": c.doc, "sections": []})
+        doc["sections"].append({"id": c.id, "heading": c.heading, "text": c.text})
+    return {"docs": list(docs.values())}
+
+
+@app.get("/admin/status", dependencies=auth)
+def admin_status(repo: Repo = Depends(get_repo)) -> dict:
+    """연결·안전장치 상태. 비밀값은 싣지 않고 설정 여부(true/false)와 개수만 보낸다."""
+    s = load_settings()
+    return {
+        "mode": {"send": "sandbox", "llm_default": s.default_llm,
+                 "providers": {"claude": bool(s.anthropic_api_key), "gemini": bool(s.gemini_api_key)}},
+        "slack": {"configured": bool(s.slack_bot_token and s.slack_channel),
+                  "signing_configured": bool(s.slack_signing_secret), "channel": s.slack_channel,
+                  "approvers": len(s.slack_approvers), "notify_kinds": list(s.slack_notify_kinds),
+                  "web_url": s.admin_web_url},
+        "safeguards": {"require_consent": s.require_consent_to_send, "max_sends_per_day": s.max_sends_per_day,
+                       "sent_today": repo.count_sent_today(), "sender_name": s.sender_name,
+                       "sender_contact": s.sender_contact},
+        "knowledge_docs": len({c.id.split("#", 1)[0] for c in default_kb().chunks}),
+    }
+
+
+class NotifyTest(BaseModel):
+    text: str | None = None
+
+
+@app.post("/admin/notify-test")
+def admin_notify_test(body: NotifyTest | None = None, p: admin_auth.Principal = Depends(principal)) -> dict:
+    """Slack 연결 시험 메시지를 한 건 보낸다 (사용자당 1분에 5회)."""
+    s = load_settings()
+    by = who(None, p)
+    if not webform.allow(f"notify-test:{by}"):
+        raise HTTPException(429, "잠시 후 다시 시도해 주세요")
+    if not (s.slack_bot_token and s.slack_channel):
+        return {"posted": False, "reason": "Slack 설정이 없습니다 (SLACK_BOT_TOKEN, SLACK_CHANNEL)"}
+    extra = ((body.text if body else None) or "").strip()[:500]
+    text = f"{by}님이 연결 시험을 실행했습니다." + (f"\n{extra}" if extra else "")
+    ok = notify("test", "연결 시험", text, settings=s)
+    return {"posted": ok, "reason": None if ok else "Slack 전송에 실패했습니다. 토큰과 채널을 확인해 주세요"}
 
 
 # --- 평가 지표와 수작업 기준 시간 ---

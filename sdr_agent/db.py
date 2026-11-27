@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from .config import Settings, load_settings
@@ -126,6 +126,31 @@ class Repo:
 
     def list_all_approvals(self, limit: int = 5000) -> list[dict]:
         return self.c.table("approvals").select("*").order("decided_at").limit(limit).execute().data
+
+    def list_recent_approvals(self, limit: int = 200) -> list[dict]:
+        return self.c.table("approvals").select("*").order("decided_at", desc=True).limit(limit).execute().data
+
+    def messages_by_ids(self, ids: list[str]) -> dict[str, dict]:
+        ids = [i for i in set(ids) if i]
+        if not ids:
+            return {}
+        rows = self.c.table("messages").select("id,lead_id,kind,subject,body,status").in_("id", ids).execute().data
+        return {r["id"]: r for r in rows}
+
+    def list_recent_replies(self, classification: str | None = None, handled_by: str | None = None,
+                            limit: int = 100) -> list[dict]:
+        q = self.c.table("replies").select("*")
+        if classification:
+            q = q.eq("classification", classification)
+        if handled_by:
+            q = q.eq("handled_by", handled_by)
+        return q.order("received_at", desc=True).limit(limit).execute().data
+
+    def count_sent_today(self) -> int:
+        """오늘(한국 시간 기준) 발송된 메시지 수."""
+        kst = timezone(timedelta(hours=9))
+        start = datetime.now(kst).replace(hour=0, minute=0, second=0, microsecond=0)
+        return self.count_sent_since(start.astimezone(timezone.utc).isoformat())
 
     def list_all_replies(self, limit: int = 5000) -> list[dict]:
         return self.c.table("replies").select("*").order("received_at").limit(limit).execute().data

@@ -49,7 +49,7 @@ def notify(
         s = settings or load_settings()
         if not (s.slack_channel and (client or s.slack_bot_token)):
             return False
-        if kind not in s.slack_notify_kinds:
+        if kind != "test" and kind not in s.slack_notify_kinds:  # 연결 시험은 항상 보낸다
             return False
         client = client or slack.get_client(s)
         if kind == "approval" and message_id and data:
