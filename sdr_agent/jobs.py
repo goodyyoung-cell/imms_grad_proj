@@ -8,6 +8,8 @@
   record_call_outcome  통화 결과 기록 → 인계 / 수신 거부 / 사람 확인
   handle_reply    답장 → 수신 거부 중단 / 사람 이관 / 답변 초안(승인 대기) / 인계
   handoff_lead    인계 요약 (→ handed_off)
+  notify_due_calls  전화 시각이 된 콜 과제를 Slack에 한 번씩 알림
+  remind_pending  오래 기다린 승인 대기를 Slack에 알림
 
 테스트에서는 repo, llm, new_log, sender를 가짜로 넣는다.
 """
@@ -39,6 +41,15 @@ logger = logging.getLogger(__name__)
 
 NewLog = Callable[[], RunLog]
 
+# 반려 사유. 어떤 오류가 많은지 세어 평가와 프롬프트 개선에 쓴다
+REASON_CODES = {
+    "factual_error": "사실과 다름",
+    "tone": "어조가 맞지 않음",
+    "wrong_target": "연락하면 안 되는 대상",
+    "forbidden_phrase": "금지 표현·과장",
+    "other": "기타",
+}
+
 
 def _wire(s: Settings, repo: Any, new_log: NewLog | None) -> tuple[Any, NewLog]:
     if repo is None:
@@ -48,6 +59,15 @@ def _wire(s: Settings, repo: Any, new_log: NewLog | None) -> tuple[Any, NewLog]:
         # 실제 DB를 쓰면 실행 로그도 DB에 남긴다 (메모리 로그의 가짜 run_id가 DB에 들어가지 않게)
         return repo, (lambda: SupabaseRunLog(repo.c))
     return repo, new_log or MemoryRunLog
+
+
+def _approval_data(lead: dict[str, Any], msg: dict[str, Any], score: dict | None,
+                   customer_reply: str | None = None) -> dict[str, Any]:
+    """승인 요청 알림(Slack)에 싣는 내용."""
+    return {"company": lead.get("company_name"), "name": lead.get("name"), "title": lead.get("title"),
+            "subject": msg.get("subject"), "body": msg.get("body"), "kind": msg.get("kind"),
+            "score": (score or {}).get("score"), "tags": (score or {}).get("tags") or [],
+            "customer_reply": customer_reply, "no_consent": not lead.get("consent_at")}
 
 
 def intake_leads(
@@ -153,7 +173,8 @@ def draft_emails(
             msg = repo.insert_message(lead_id, result["run_id"], "initial", result["draft"])
             repo.set_status(lead_id, "awaiting_approval")
             notify("approval", f"메일 승인 요청: {lead.get('company_name')} ({msg['id']})",
-                   f"제목: {msg['subject']}\n\n{msg['body']}")
+                   f"제목: {msg['subject']}\n\n{msg['body']}", message_id=msg["id"], lead_id=lead_id,
+                   data=_approval_data(lead, msg, repo.latest_score(lead_id)))
             out.append({"lead_id": lead_id, "status": "drafted", "message_id": msg["id"], "run_id": result["run_id"]})
         except Exception as exc:
             logger.exception("초안 실패: %s", lead_id)
@@ -169,6 +190,8 @@ def decide_message(
     channel: str = "admin",
     edited_body: str | None = None,
     note: str | None = None,
+    reason_code: str | None = None,
+    review_seconds: int | None = None,
     settings: Settings | None = None,
     repo: Any = None,
     sender: Sender | None = None,
@@ -176,19 +199,30 @@ def decide_message(
     new_log: NewLog | None = None,
 ) -> dict[str, Any]:
     """사람의 승인 결정을 기록한다. 승인(또는 수정 승인)이면 바로 샌드박스로 발송한다.
-    첫 메일이 나가면 전화 팔로업 과제와 콜 스크립트를 만든다."""
+    첫 메일이 나가면 전화 팔로업 과제와 콜 스크립트를 만든다.
+
+    평가용으로 반려 사유(reason_code), 수정 승인이면 수정 전 초안, 사람이 검토에 쓴 시간(review_seconds)도 남긴다."""
     if decision not in ("approved", "rejected", "edited"):
         raise ValueError("decision은 approved, rejected, edited 중 하나입니다")
     if decision == "edited" and not (edited_body and edited_body.strip()):
         raise ValueError("edited에는 수정한 본문이 필요합니다")
+    if reason_code and reason_code not in REASON_CODES:
+        raise ValueError(f"알 수 없는 반려 사유입니다: {reason_code}")
     s = settings or load_settings()
     repo, new_log = _wire(s, repo, new_log)
     msg = repo.get_message(message_id)
     if msg["status"] != "pending_approval":
         raise ValueError(f"승인 대기 중인 메시지가 아닙니다 (status={msg['status']})")
 
-    repo.insert_approval({"message_id": message_id, "decision": decision, "decided_by": decided_by,
-                          "channel": channel, "edited_body": edited_body, "note": note})
+    approval: dict[str, Any] = {"message_id": message_id, "decision": decision, "decided_by": decided_by,
+                                "channel": channel, "edited_body": edited_body, "note": note}
+    if decision == "rejected" and reason_code:
+        approval["reason_code"] = reason_code
+    if decision == "edited":
+        approval["original_body"] = msg["body"]
+    if review_seconds is not None:
+        approval["review_seconds"] = max(0, min(int(review_seconds), 3600))
+    repo.insert_approval(approval)
     if decision == "rejected":
         repo.update_message(message_id, {"status": "rejected"})
         repo.set_status(msg["lead_id"], "needs_human")
@@ -282,7 +316,7 @@ def handle_reply(
 
     if action == "unsubscribe":
         repo.unsubscribe(lead_id)
-        notify("unsubscribe", f"수신 거부: {lead.get('company_name')}", "모든 발송을 중단했습니다.")
+        notify("unsubscribe", f"수신 거부: {lead.get('company_name')}", "모든 발송을 중단했습니다.", lead_id=lead_id)
     elif action == "handoff":
         out["handoff"] = handoff_lead(lead_id, reason=f"답장에서 관심 표명: {triage['reason']}", trigger=trigger,
                                       settings=s, repo=repo, llm=llm, new_log=new_log)
@@ -291,19 +325,21 @@ def handle_reply(
         msg = repo.insert_message(lead_id, triage["run_id"], "followup", answer)
         repo.set_status(lead_id, "awaiting_approval")
         notify("approval", f"답변 승인 요청: {lead.get('company_name')} ({msg['id']})",
-               f"고객 답장:\n{body}\n\n답변 초안:\n{msg['body']}")
+               f"고객 답장:\n{body}\n\n답변 초안:\n{msg['body']}", message_id=msg["id"], lead_id=lead_id,
+               data=_approval_data(lead, msg, repo.latest_score(lead_id), customer_reply=body))
         out["message_id"] = msg["id"]
     elif action == "followup_later":
         repo.set_status(lead_id, "replied")
-        notify("followup", f"후속 시점 확인 필요: {lead.get('company_name')}", triage["reason"])
+        notify("followup", f"후속 시점 확인 필요: {lead.get('company_name')}", triage["reason"], lead_id=lead_id)
     elif action == "confirm_unsubscribe":
         repo.set_status(lead_id, "needs_human")
         notify("needs_human", f"수신 거부 의심, 확인 필요: {lead.get('company_name')}",
                f"AI가 수신 거부로 보았지만 확신도가 낮습니다 ({triage['confidence']:.2f}). 맞으면 수신 거부로 확정하세요:\n"
-               f"  python -m sdr_agent.cli unsubscribe {lead_id} --by <이름>\n\n답장: {body}")
+               f"  python -m sdr_agent.cli unsubscribe {lead_id} --by <이름>\n\n답장: {body}", lead_id=lead_id)
     else:  # needs_human
         repo.set_status(lead_id, "needs_human")
-        notify("needs_human", f"사람 확인 필요: {lead.get('company_name')}", f"{triage['reason']}\n\n{body}")
+        notify("needs_human", f"사람 확인 필요: {lead.get('company_name')}", f"{triage['reason']}\n\n{body}",
+               lead_id=lead_id)
     return out
 
 
@@ -323,7 +359,8 @@ def confirm_unsubscribe(
         return {"lead_id": lead_id, "status": "already_unsubscribed"}
     repo.unsubscribe(lead_id)
     logger.info("수신 거부 확정: %s by %s (%s)", lead_id, decided_by, note or "")
-    notify("unsubscribe", f"수신 거부 확정: {lead.get('company_name')}", f"확정한 사람: {decided_by}. {note or ''}".strip())
+    notify("unsubscribe", f"수신 거부 확정: {lead.get('company_name')}", f"확정한 사람: {decided_by}. {note or ''}".strip(),
+           lead_id=lead_id)
     return {"lead_id": lead_id, "status": "unsubscribed", "decided_by": decided_by}
 
 
@@ -357,7 +394,7 @@ def handoff_lead(
                                "sent_to": s.handoff_to, "channel": "log"})
     repo.set_status(lead_id, "handed_off")
     text = render_text(result["summary"], result["screening_questions"])
-    notify("handoff", f"인계: {lead.get('company_name')}", text)
+    notify("handoff", f"인계: {lead.get('company_name')}", text, lead_id=lead_id)
     return {"handoff_id": row["id"], "run_id": result["run_id"], "by": result["by"], "text": text}
 
 
@@ -441,7 +478,8 @@ def create_call_task(
     task = repo.insert_call_task({"lead_id": lead["id"], "message_id": message_id, "run_id": result["run_id"],
                                   "script": result["script"], "due_at": due.isoformat()})
     text = render_call_script(result["script"], lead, due.strftime("%Y-%m-%d %H:%M KST"))
-    notify("call", f"전화 팔로업 예정: {lead.get('company_name')} ({due:%m/%d %H:%M})", text)
+    notify("call", f"전화 팔로업 예정: {lead.get('company_name')} ({due:%m/%d %H:%M})", text,
+           lead_id=lead["id"], call_id=task["id"])
     return {"task_id": task["id"], "status": "pending", "due_at": due.isoformat(), "by": result["by"],
             "run_id": result["run_id"], "text": text}
 
@@ -491,7 +529,8 @@ def record_call_outcome(
     out: dict[str, Any] = {"task_id": task_id, "outcome": outcome, "action": action or "keep"}
     if action == "unsubscribe":
         repo.unsubscribe(lead_id)
-        notify("unsubscribe", f"전화에서 연락 거부: {lead.get('company_name')}", "모든 발송과 전화를 중단했습니다.")
+        notify("unsubscribe", f"전화에서 연락 거부: {lead.get('company_name')}", "모든 발송과 전화를 중단했습니다.",
+               lead_id=lead_id, call_id=task_id)
     elif lead.get("status") in ("handed_off", "unsubscribed"):
         out["action"] = "keep"  # 이미 인계·중단된 리드는 기록만 남긴다
     elif action == "handoff":
@@ -501,5 +540,64 @@ def record_call_outcome(
     elif action:
         repo.set_status(lead_id, action)
         if action == "needs_human":
-            notify("needs_human", f"전화 팔로업 후 확인 필요: {lead.get('company_name')}", f"{outcome}: {notes or ''}")
+            notify("needs_human", f"전화 팔로업 후 확인 필요: {lead.get('company_name')}", f"{outcome}: {notes or ''}",
+                   lead_id=lead_id, call_id=task_id)
     return out
+
+
+def notify_due_calls(*, settings: Settings | None = None, repo: Any = None, client: Any = None) -> dict[str, Any]:
+    """전화 시각이 지난 대기 콜 과제를 과제마다 한 번씩 Slack에 알린다 (Cloud Scheduler가 10분마다 부른다).
+
+    알렸다는 표시는 script JSON의 due_notified_at에 남겨 스키마를 바꾸지 않는다. 실제로 Slack에 올라갔을 때만 표시하므로
+    Slack이 아직 설정되지 않았거나 전송이 실패하면 다음 실행에서 다시 시도한다.
+    """
+    s = settings or load_settings()
+    repo, _ = _wire(s, repo, None)
+    now = datetime.now(timezone.utc)
+    announced = 0
+    due = repo.list_call_tasks(status="pending", due_before=now.isoformat())
+    for t in due:
+        script = dict(t["script"])
+        if script.get("due_notified_at"):
+            continue
+        lead = repo.get_lead(t["lead_id"])
+        headline = " ".join(str(script.get("email_summary") or "").split())
+        if len(headline) > 140:
+            headline = headline[:139] + "…"
+        due_kst = _parse_ts(t["due_at"]).astimezone(KST)
+        text = "\n".join(x for x in (
+            f"고객: {lead.get('name') or '(이름 미상)'} {lead.get('title') or ''}".rstrip(),
+            f"연락처: {lead.get('phone')}" if lead.get("phone") else "",
+            f"예정 시각: {due_kst:%m/%d %H:%M} KST",
+            f"요약: {headline}" if headline else "",
+        ) if x)
+        if notify("call_due", f"전화할 시간입니다: {lead.get('company_name')}", text, lead_id=t["lead_id"],
+                  call_id=t["id"], settings=s, client=client):
+            script["due_notified_at"] = now.isoformat()
+            repo.update_call_task(t["id"], {"script": script})
+            announced += 1
+    return {"due": len(due), "announced": announced}
+
+
+def remind_pending(*, hours: int | None = None, settings: Settings | None = None, repo: Any = None,
+                   client: Any = None) -> dict[str, Any]:
+    """오래 기다린 승인 대기 메일이 있으면 Slack에 한 번 알린다 (Cloud Scheduler가 매시간 부른다)."""
+    s = settings or load_settings()
+    repo, _ = _wire(s, repo, None)
+    limit = timedelta(hours=hours if hours is not None else s.reminder_hours)
+    now = datetime.now(timezone.utc)
+    stale = []
+    for m in repo.list_messages(status="pending_approval", limit=200):
+        waited = now - _parse_ts(m["created_at"])
+        if waited >= limit:
+            stale.append((waited, m))
+    if stale:
+        stale.sort(key=lambda t: t[0], reverse=True)
+        oldest = int(stale[0][0].total_seconds() // 3600)
+        lines = []
+        for _, m in stale[:10]:
+            lead = repo.get_lead(m["lead_id"])
+            lines.append(f"- {lead.get('company_name')}: {m['subject']}")
+        notify("reminder", f"승인 대기 {len(stale)}건 (가장 오래된 것 {oldest}시간)", "\n".join(lines),
+               settings=s, client=client)
+    return {"pending_over_limit": len(stale)}

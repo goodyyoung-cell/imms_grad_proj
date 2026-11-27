@@ -4,25 +4,29 @@
 - 외부 이벤트(답장 도착, 외부 폼)는 /webhooks/* 로 들어온다
 - 관리 화면(프론트엔드)은 /auth/login 으로 로그인한 뒤 /admin/* 을 부른다 (docs/frontend-handoff.md)
 
-인증 (공개 URL이라 /health, /form 말고는 모두 필요)
+인증 (공개 URL이라 /health, /form, /webhooks/slack/interactions 말고는 모두 필요)
 - 관리 화면: POST /auth/login {name, password=ADMIN_PASSWORD} → `Authorization: Bearer adm.…` (8시간)
 - 예약 실행·CLI·외부 서버: `Authorization: Bearer <JOB_TOKEN>`
+- Slack 버튼: Bearer 대신 Slack 서명(SLACK_SIGNING_SECRET)으로 검증한다
 JOB_TOKEN을 브라우저 코드에 넣지 않는다.
 """
 
 from __future__ import annotations
 
 import hmac
+import json
 import logging
 from datetime import datetime, timezone
+from urllib.parse import parse_qs
 
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse
+from fastapi.concurrency import run_in_threadpool
+from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
 
 from . import auth as admin_auth
-from . import jobs, sheets, webform
+from . import jobs, sheets, slack, webform
 from .config import load_settings
 from .db import Repo, get_client
 from .workflows.call_script import render_text as render_call_script
@@ -219,6 +223,22 @@ def job_draft(job: BatchJob) -> dict:
     return {"processed": len(results), "results": results}
 
 
+@app.post("/jobs/notify-due-calls", dependencies=auth)
+def job_notify_due_calls(repo: Repo = Depends(get_repo)) -> dict:
+    """전화 시각이 된 콜 과제를 Slack에 알린다 (과제마다 한 번)."""
+    return jobs.notify_due_calls(repo=repo)
+
+
+class RemindJob(BaseModel):
+    hours: int | None = None  # 비우면 REMINDER_HOURS
+
+
+@app.post("/jobs/remind", dependencies=auth)
+def job_remind(job: RemindJob | None = None, repo: Repo = Depends(get_repo)) -> dict:
+    """오래 기다린 승인 대기 메일을 Slack에 알린다."""
+    return jobs.remind_pending(hours=job.hours if job else None, repo=repo)
+
+
 class HandoffJob(BaseModel):
     lead_id: str
     reason: str = "담당자 요청"
@@ -248,6 +268,24 @@ def webhook_reply(reply: InboundReply) -> dict:
         raise HTTPException(404, str(exc))
     except ValueError as exc:
         raise HTTPException(400, str(exc))
+
+
+@app.post("/webhooks/slack/interactions")
+async def webhook_slack_interactions(request: Request, repo: Repo = Depends(get_repo)) -> JSONResponse:
+    """Slack 버튼(승인·수정·반려)과 모달 제출이 들어오는 곳. Slack은 Bearer를 보낼 수 없어 서명으로만 보호한다."""
+    s = load_settings()
+    if not s.slack_signing_secret:
+        raise HTTPException(503, "SLACK_SIGNING_SECRET이 설정되지 않았습니다")
+    raw = await request.body()
+    if not slack.verify_signature(s.slack_signing_secret, request.headers.get("x-slack-request-timestamp"), raw,
+                                  request.headers.get("x-slack-signature")):
+        raise HTTPException(401, "서명 검증 실패")
+    try:
+        payload = json.loads(parse_qs(raw.decode()).get("payload", [""])[0])
+    except (ValueError, IndexError):
+        raise HTTPException(400, "payload를 읽을 수 없습니다")
+    body = await run_in_threadpool(slack.handle_interaction, payload, settings=s, repo=repo)
+    return JSONResponse(body or {})
 
 
 # --- 관리 화면 조회 ---
@@ -344,6 +382,8 @@ class Decision(BaseModel):
     decided_by: str | None = None  # 비우면 로그인 이름
     edited_body: str | None = None
     note: str | None = None
+    reason_code: str | None = None     # 반려 사유: factual_error | tone | wrong_target | forbidden_phrase | other
+    review_seconds: int | None = None  # 화면에서 검토에 쓴 시간(초)
 
 
 @app.post("/admin/messages/{message_id}/decision")
@@ -351,7 +391,8 @@ def admin_decide(message_id: str, d: Decision, p: admin_auth.Principal = Depends
     """메일 승인·수정 승인·반려. 승인하면 바로 샌드박스 발송, 첫 메일이면 전화 과제 생성."""
     try:
         return jobs.decide_message(message_id, d.decision, who(d.decided_by, p), channel="admin",
-                                   edited_body=d.edited_body, note=d.note)
+                                   edited_body=d.edited_body, note=d.note, reason_code=d.reason_code,
+                                   review_seconds=d.review_seconds)
     except LookupError as exc:
         raise HTTPException(404, str(exc))
     except ValueError as exc:

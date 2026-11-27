@@ -15,6 +15,10 @@ def _get(name: str, default: str | None = None) -> str | None:
     return value if value else default
 
 
+def _csv(name: str, default: str = "") -> tuple[str, ...]:
+    return tuple(x.strip() for x in (_get(name, default) or "").split(",") if x.strip())
+
+
 # 로컬 프론트엔드 개발 서버 (Next.js 3000, Vite 5173, 기타 흔한 포트)
 DEFAULT_ORIGINS = ",".join(f"http://{h}:{p}" for h in ("localhost", "127.0.0.1") for p in (3000, 3001, 4173, 5173, 8080))
 
@@ -42,6 +46,14 @@ class Settings:
     allowed_origins: tuple[str, ...] = ()  # 관리 화면이 다른 주소에서 뜰 때 허용할 출처 (CORS)
     call_delay_minutes: int = 60        # 첫 메일 발송 후 최소 몇 분 뒤 전화할지
     call_hours_kst: tuple[int, int] = (9, 18)  # 전화해도 되는 시간대 (평일, 한국 시간, 시작 이상 끝 미만)
+    slack_bot_token: str | None = None       # 승인 요청·알림을 보내는 Slack 앱의 봇 토큰 (xoxb-...)
+    slack_signing_secret: str | None = None  # Slack이 버튼 클릭을 보낼 때 서명을 검증하는 비밀값
+    slack_channel: str | None = None         # 알림을 올릴 채널 ID (C...)
+    slack_approvers: tuple[str, ...] = ()    # 승인·반려할 수 있는 Slack 사용자 ID. 비우면 채널 구성원 모두
+    slack_notify_kinds: tuple[str, ...] = ("approval", "needs_human", "unsubscribe", "handoff", "followup",
+                                           "call_due", "reminder")
+    admin_web_url: str | None = None         # 관리 웹(React) 주소. 알림의 딥링크 기준. 끝에 / 없음
+    reminder_hours: int = 4                  # 승인 대기가 이 시간을 넘으면 /jobs/remind 가 알린다
 
 
 def load_settings() -> Settings:
@@ -67,4 +79,12 @@ def load_settings() -> Settings:
         call_hours_kst=tuple(int(h) for h in _get("CALL_HOURS_KST", "9-18").split("-", 1)),
         booking_url=_get("BOOKING_URL"),
         handoff_to=_get("HANDOFF_TO"),
+        slack_bot_token=_get("SLACK_BOT_TOKEN"),
+        slack_signing_secret=_get("SLACK_SIGNING_SECRET"),
+        slack_channel=_get("SLACK_CHANNEL"),
+        slack_approvers=_csv("SLACK_APPROVERS"),
+        slack_notify_kinds=_csv("SLACK_NOTIFY_KINDS",
+                                "approval,needs_human,unsubscribe,handoff,followup,call_due,reminder"),
+        admin_web_url=(_get("ADMIN_WEB_URL") or "").rstrip("/") or None,
+        reminder_hours=int(_get("REMINDER_HOURS", "4")),
     )

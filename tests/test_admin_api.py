@@ -143,6 +143,10 @@ def test_decisions_use_login_name_when_not_given(client, monkeypatch):
     assert client.post("/admin/messages/M1/decision", json={"decision": "approved"}, headers=h).status_code == 200
     assert client.post("/admin/calls/C1/outcome", json={"outcome": "voicemail"}, headers=h).status_code == 200
     assert seen == {"by": "이담당", "called": "이담당"}
+    monkeypatch.setattr(jobs, "decide_message", lambda mid, decision, by, **kw: seen.update(kw=kw) or {"status": "rejected"})
+    r = client.post("/admin/messages/M1/decision", headers=h,
+                    json={"decision": "rejected", "reason_code": "tone", "review_seconds": 30})
+    assert r.status_code == 200 and seen["kw"]["reason_code"] == "tone" and seen["kw"]["review_seconds"] == 30
     # JOB_TOKEN(시스템)으로는 누가 했는지 직접 적어야 한다
     sys_h = {"Authorization": "Bearer job-secret"}
     assert client.post("/admin/messages/M1/decision", json={"decision": "approved"}, headers=sys_h).status_code == 400

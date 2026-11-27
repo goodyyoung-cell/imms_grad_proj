@@ -6,6 +6,7 @@
 #   RESEARCH_LIMIT=10 bash scripts/setup_scheduler.sh
 #
 # 초안은 만들기만 하고 발송하지 않는다 (사람 승인 대기). 콜 과제는 발송 시점에 생기므로 예약이 필요 없다.
+# Slack 알림 두 개도 함께 등록한다: 전화 시각 안내(10분마다), 승인 대기 재알림(매시간). 둘 다 평일 업무 시간(KST)에만 돈다.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 set -a; source .env; set +a
@@ -29,4 +30,6 @@ upsert() {
 
 upsert sdr-morning-research "30 7 * * 1-5" /jobs/research "{\"limit\": $RESEARCH_LIMIT, \"trigger\": \"schedule\"}"
 upsert sdr-morning-draft    "0 8 * * 1-5"  /jobs/draft    "{\"limit\": $DRAFT_LIMIT, \"trigger\": \"schedule\"}"
+upsert sdr-call-due-notice  "*/10 9-17 * * 1-5" /jobs/notify-due-calls "{}"
+upsert sdr-approval-remind  "0 9-18 * * 1-5"    /jobs/remind "{}"
 gcloud scheduler jobs list --location "$REGION" --format='table(name.basename(), schedule, timeZone, state)'
