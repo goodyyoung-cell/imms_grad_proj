@@ -77,6 +77,18 @@ jobs.py --notify()--> Slack 채널 (승인 요청, 사람 확인 필요, 수신 
 6. 시연 때는 첫 요청이 느리지 않도록 `--min-instances 1`을 권한다. Slack은 3초 안에 응답을 받아야 하는데, 콜드 스타트가 길면 버튼이 "실패"로 보일 수 있다 (처리는 이어서 끝나고 결과는 메시지에 반영된다).
 7. 관리 웹이 다른 주소에서 뜨면 `ALLOWED_ORIGINS`에 그 주소를 넣는다 (CORS). Slack 경로는 브라우저가 부르지 않으므로 CORS와 무관하다.
 
+## 4.1 로컬에서 먼저 시험하기 (DB·LLM 키 없이)
+
+Cloud Run에 배포하기 전에 Slack 쪽만 따로 확인하는 방법이다. 가짜 DB에 가상 메일 3건을 넣고 실제 승인 코드가 도는 서버를 내 컴퓨터에 띄운다.
+
+1. Slack 앱과 채널을 4절 1~3번대로 만든다. **Slack은 설치하지 않아도 되고 웹 브라우저(app.slack.com)로 충분하다.** 무료 워크스페이스로 시험할 수 있다.
+2. `.env`(또는 환경변수)에 `SLACK_BOT_TOKEN`, `SLACK_SIGNING_SECRET`, `SLACK_CHANNEL`을 넣는다. 내 Slack 사용자 ID를 `SLACK_APPROVERS`에 넣으면 승인자 제한까지 시험할 수 있다.
+3. 서버를 띄운다: `pip install -e ".[dev]"` 후 `python scripts/slack_sandbox.py`. 시작하면 승인 요청 3건이 채널에 올라간다. 4번을 하기 전에는 버튼을 눌러도 Slack이 서버에 닿지 못해 오류로 보인다.
+4. 버튼이 서버에 닿으려면 공개 주소가 필요하다. 계정이 필요 없는 방법: `winget install Cloudflare.cloudflared` 후 `cloudflared tunnel --url http://localhost:8000`. 출력되는 `https://....trycloudflare.com`을 Slack 앱의 **Interactivity & Shortcuts > Request URL**에 `https://<그 주소>/webhooks/slack/interactions`로 저장한다. 터널을 다시 켜면 주소가 바뀌므로 다시 저장한다. (ngrok도 되지만 계정이 필요하다.)
+5. 채널에서 **승인**, **수정 후 승인**, **반려**를 눌러 본다. `http://localhost:8000/sandbox/state`에서 메일 상태, 승인 기록(`channel=slack`), 생긴 전화 과제를 확인한다. 서버를 끄면 데이터가 사라진다.
+
+이 방법으로 확인되는 것: 서명 검증, 버튼과 수정·반려 창, 메시지가 결과로 바뀌는 동작, 승인자 제한, Slack의 3초 응답 제한을 내 컴퓨터 속도에서 넘는지. 확인되지 않는 것: 실제 Supabase, Cloud Run의 콜드 스타트, 실제 LLM 초안, 전화 시각 알림(스케줄러가 부름), 관리 웹 링크(`ADMIN_WEB_URL`을 넣으면 링크 버튼 주소까지는 볼 수 있다).
+
 ## 5. 환경변수
 
 | 이름 | 설명 |
