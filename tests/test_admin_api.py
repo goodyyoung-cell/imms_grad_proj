@@ -58,6 +58,24 @@ class AdminRepo:
     def list_handoffs(self, lead_id):
         return []
 
+    timings: list = []
+
+    def list_all_approvals(self):
+        return [{"message_id": "M1", "decision": "approved", "decided_at": NOW, "channel": "admin"}]
+
+    def list_all_replies(self):
+        return []
+
+    def list_all_leads(self):
+        return [{"id": "L1", "created_at": NOW}]
+
+    def list_manual_timings(self):
+        return list(self.timings)
+
+    def insert_manual_timing(self, row):
+        self.timings.append({"id": "T1", "created_at": NOW, **row})
+        return self.timings[-1]
+
     def get_run(self, run_id):
         return {"id": run_id, "steps": [{"step_no": 1, "kind": "llm", "text": "홈페이지부터 봅니다"}]}
 
@@ -150,3 +168,34 @@ def test_decisions_use_login_name_when_not_given(client, monkeypatch):
     # JOB_TOKEN(시스템)으로는 누가 했는지 직접 적어야 한다
     sys_h = {"Authorization": "Bearer job-secret"}
     assert client.post("/admin/messages/M1/decision", json={"decision": "approved"}, headers=sys_h).status_code == 400
+
+
+def test_metrics_and_baseline_require_auth_and_have_expected_shape(client):
+    AdminRepo.timings = []
+    assert client.get("/admin/metrics").status_code == 401
+    assert client.get("/admin/baseline").status_code == 401
+    assert client.post("/admin/baseline", json={"task": "draft", "minutes": 5}).status_code == 401
+    h = {"Authorization": f"Bearer {login(client, name='이담당').json()['token']}"}
+    m = client.get("/admin/metrics", headers=h).json()
+    assert set(m) >= {"approval", "replies", "runs", "calls", "first_draft", "compare", "per_lead", "leads", "rows"}
+    assert m["approval"]["decisions"] == 1 and m["calls"]["total"] == 1 and m["calls"]["pending"] == 1
+    assert ["승인", "결정 수", 1] in m["rows"]
+    b = client.get("/admin/baseline", headers=h).json()
+    assert set(b["tasks"]) == {"research", "prioritize", "draft", "handoff", "reply_triage"} and b["timings"] == []
+    assert b["stats"]["draft"] == {"n": 0, "median": None, "mean": None}
+
+
+def test_baseline_post_validates_and_records_login_name(client):
+    AdminRepo.timings = []
+    h = {"Authorization": f"Bearer {login(client, name='이담당').json()['token']}"}
+    ok = client.post("/admin/baseline", headers=h, json={"task": "draft", "minutes": 7.5, "label": "한빛몰"})
+    assert ok.status_code == 200 and ok.json()["seconds"] == 450 and ok.json()["recorded_by"] == "이담당"
+    assert client.post("/admin/baseline", headers=h, json={"task": "research", "seconds": 120}).json()["seconds"] == 120
+    for bad in ({"task": "nope", "minutes": 5}, {"task": "draft", "minutes": 0}, {"task": "draft", "minutes": 9 * 60},
+                {"task": "draft"}):
+        assert client.post("/admin/baseline", headers=h, json=bad).status_code == 400
+    stats = client.get("/admin/baseline", headers=h).json()["stats"]
+    assert stats["draft"]["n"] == 1 and stats["draft"]["median"] == 450
+    sys_h = {"Authorization": "Bearer job-secret"}
+    assert client.post("/admin/baseline", headers=sys_h, json={"task": "draft", "minutes": 5}).status_code == 400
+    AdminRepo.timings = []

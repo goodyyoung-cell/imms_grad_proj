@@ -115,6 +115,24 @@ class Repo:
     def insert_approval(self, row: dict) -> None:
         self.c.table("approvals").insert(row).execute()
 
+    # --- 평가 지표 (관리 화면의 /admin/metrics) ---
+
+    def list_all_approvals(self, limit: int = 5000) -> list[dict]:
+        return self.c.table("approvals").select("*").order("decided_at").limit(limit).execute().data
+
+    def list_all_replies(self, limit: int = 5000) -> list[dict]:
+        return self.c.table("replies").select("*").order("received_at").limit(limit).execute().data
+
+    def list_all_leads(self, limit: int = 5000) -> list[dict]:
+        return (self.c.table("leads").select("id,status,created_at,inbound_at,consent_at,unsubscribed_at")
+                .is_("merged_into", "null").limit(limit).execute().data)
+
+    def insert_manual_timing(self, row: dict) -> dict:
+        return self.c.table("manual_timings").insert(row).execute().data[0]
+
+    def list_manual_timings(self, limit: int = 1000) -> list[dict]:
+        return self.c.table("manual_timings").select("*").order("created_at", desc=True).limit(limit).execute().data
+
     # --- 답장·인계 ---
 
     def insert_reply(self, row: dict) -> dict:

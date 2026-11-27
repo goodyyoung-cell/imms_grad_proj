@@ -26,7 +26,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
 
 from . import auth as admin_auth
-from . import jobs, sheets, slack, webform
+from . import jobs, metrics, sheets, slack, webform
 from .config import load_settings
 from .db import Repo, get_client
 from .workflows.call_script import render_text as render_call_script
@@ -373,6 +373,45 @@ def admin_run_detail(run_id: str, repo: Repo = Depends(get_repo)) -> dict:
         return repo.get_run(run_id)
     except LookupError as exc:
         raise HTTPException(404, str(exc))
+
+
+# --- 평가 지표와 수작업 기준 시간 ---
+
+@app.get("/admin/metrics", dependencies=auth)
+def admin_metrics(repo: Repo = Depends(get_repo)) -> dict:
+    """평가 지표. rows는 보고서·CSV용으로 펼친 [구분, 지표, 값] 목록."""
+    m = metrics.compute(messages=repo.list_messages(limit=5000), approvals=repo.list_all_approvals(),
+                        replies=repo.list_all_replies(), runs=repo.list_runs(limit=5000),
+                        leads=repo.list_all_leads(), timings=repo.list_manual_timings(),
+                        calls=repo.list_call_tasks(limit=5000))
+    return {**m, "rows": [list(r) for r in metrics.to_rows(m)]}
+
+
+@app.get("/admin/baseline", dependencies=auth)
+def admin_baseline(repo: Repo = Depends(get_repo)) -> dict:
+    """사람이 직접 했을 때 걸린 시간 기록 목록과 과제별 통계."""
+    timings = repo.list_manual_timings()
+    return {"tasks": metrics.TASKS, "timings": timings, "stats": metrics.timing_stats(timings)}
+
+
+class BaselineEntry(BaseModel):
+    task: str                       # research | prioritize | draft | handoff | reply_triage
+    minutes: float | None = None
+    seconds: float | None = None    # minutes 대신 초로 줄 수 있다
+    label: str | None = None        # 어떤 리드·시나리오로 쟀는지
+
+
+@app.post("/admin/baseline")
+def admin_baseline_add(b: BaselineEntry, p: admin_auth.Principal = Depends(principal),
+                       repo: Repo = Depends(get_repo)) -> dict:
+    """수작업 기준 시간 한 건을 기록한다. 기록한 사람은 로그인 이름."""
+    if b.seconds is None and b.minutes is None:
+        raise HTTPException(400, "minutes 또는 seconds가 필요합니다")
+    seconds = round(b.seconds if b.seconds is not None else b.minutes * 60)
+    if b.task not in metrics.TASKS or not 0 < seconds <= 8 * 3600:
+        raise HTTPException(400, f"task는 {list(metrics.TASKS)} 중 하나이고, 시간은 0보다 크고 8시간 이하여야 합니다")
+    return repo.insert_manual_timing({"task": b.task, "seconds": seconds, "label": (b.label or "").strip()[:100] or None,
+                                      "recorded_by": who(None, p)})
 
 
 # --- 관리 화면 동작 (사람의 결정) ---
