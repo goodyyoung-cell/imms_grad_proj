@@ -137,3 +137,22 @@ pytest                                  # 키 없이 도는 테스트
 - 점수는 규칙이 매긴다. 화면에 점수와 함께 근거 태그(`tags`)를 보여 준다.
 - 리서치 사실은 출처 링크(`source_url`)와 함께 보여 준다.
 - AI가 쓴 초안·스크립트임을 화면에서 알 수 있게 한다.
+
+
+## Slack·지표·동의 API
+
+Slack 알림의 딥링크는 `ADMIN_WEB_URL` 기준으로 아래 주소를 연다. 라우트를 이 규칙으로 만들어 주세요.
+`/m/{message_id}`(메일 검토), `/l/{lead_id}`(리드), `/c/{call_task_id}`(전화 과제), `/`(홈). 설정은 `docs/admin-slack.md`.
+
+| 메서드·주소 | 설명 |
+|-------------|------|
+| `POST /admin/messages/{id}/decision` | 기존 본문에 선택 항목 추가: `reason_code`(`factual_error`, `tone`, `wrong_target`, `forbidden_phrase`, `other`. 반려 때 보낸다), `review_seconds`(화면에서 검토한 초) |
+| `GET /admin/metrics` | 평가 지표(`approval`, `replies`, `runs`, `calls`, `first_draft`, `compare`, `per_lead`, `leads`)와 CSV용 `rows`(`[구분, 지표, 값]` 목록) |
+| `GET /admin/baseline` | 수작업 기준 시간 목록(`timings`), 과제 이름(`tasks`), 과제별 통계(`stats`: n, median, mean) |
+| `POST /admin/baseline` | `{task, minutes 또는 seconds, label?}`. `task`는 `research`, `prioritize`, `draft`, `handoff`, `reply_triage`. 기록자는 로그인 이름. 0초 초과 8시간 이하 |
+| `POST /admin/leads/{id}/consent` | `{note}` 수신 동의를 직접 확인한 근거. 로그인 이름이 함께 남는다 |
+| `POST /jobs/notify-due-calls`, `POST /jobs/remind` | 예약 실행용 (JOB_TOKEN). 화면에서 부를 필요는 없다 |
+
+- 메일의 수신 거부 링크(`/unsubscribe/...`)와 Slack 버튼(`/webhooks/slack/interactions`)은 백엔드가 직접 처리하므로 프론트엔드가 다룰 것이 없다.
+- 메일 제목은 `(광고) `로 시작하고 본문 끝에 고지와 수신 거부 안내가 붙는다. 수정 화면에서 지워도 승인할 때 다시 붙는다고 안내해 주세요.
+- 승인했지만 하루 발송 한도(`MAX_SENDS_PER_DAY`)로 발송되지 못하면 결정 API가 400을 돌려주고 메일은 승인 상태로 남는다. 같은 메일을 다시 보내는 화면은 아직 없다.

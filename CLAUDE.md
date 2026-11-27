@@ -80,7 +80,7 @@ AI가 초기 영업 단계(Top of Funnel)의 반복적인 접촉·응대·선별
 - 실행 환경: Google Cloud Run (웹훅용 서비스 + 예약 실행, Cloud Scheduler). 필수. 개발은 로컬에서 하고, 뼈대부터 배포해 두고 기능을 얹는다
 - DB: Supabase (Postgres) — 리드 상태, 실행 로그, 승인 기록
 - 벡터 DB / RAG: Supabase pgvector 우선 검토 (미정)
-- 승인 채널: Slack 또는 이메일 (미정)
+- 승인 채널: Slack (버튼 승인·수정·반려, 서명 검증)과 관리 웹. 설정은 [`docs/admin-slack.md`](docs/admin-slack.md)
 - 이메일 발송·수신: 미정 (개발 단계에서는 실제 발송 대신 샌드박스·모의 수신함 사용)
 - 화상 미팅 플랫폼: 이번 학기는 연동하지 않음
 
@@ -96,6 +96,8 @@ AI가 초기 영업 단계(Top of Funnel)의 반복적인 접촉·응대·선별
 │   ├── scope.md         # 이번 학기 구현 범위 (P0/P1/축소)
 │   ├── deploy.md        # Supabase·Cloud Run 배포 방법
 │   ├── frontend-handoff.md  # 관리 화면 개발 안내 (API·로그인·화면 구성)
+│   ├── admin-slack.md   # Slack 연동·알림·예약 실행·평가 지표 설정 (slack-app-manifest.yaml 포함)
+│   ├── research-ai-sdr.md  # 시장·법 조사 요약 (광고 표시, 동의, 평가 근거)
 │   └── meetings/        # 회의 메모
 ├── sdr_agent/
 │   ├── llm/             # Claude·Gemini 어댑터. 공통 타입은 base.py
@@ -109,11 +111,14 @@ AI가 초기 영업 단계(Top of Funnel)의 반복적인 접촉·응대·선별
 │   ├── sheets.py        # CSV·엑셀·구글 시트 읽기, 열 이름 별칭
 │   ├── webform.py       # 웹사이트 데모 신청 폼 (동의·봇 방지)
 │   ├── outbox.py        # 메일 발송 (지금은 샌드박스만. 도구가 아님)
-│   ├── notify.py        # 사람에게 알림 (승인 채널 미정이라 지금은 로그)
+│   ├── notify.py        # 사람에게 알림 (로그 + Slack, 실패해도 흐름을 멈추지 않음)
+│   ├── slack.py         # Slack 승인 채널: 서명 검증, 메시지 블록, 버튼·모달 처리
+│   ├── compliance.py    # 광고성 메일 표시((광고), 영문 수신 거부, 전송자), 수신 거부 링크 토큰
+│   ├── metrics.py       # 평가 지표 계산 (순수 함수. /admin/metrics)
 │   ├── scoring.py       # 규칙 기반 리드 점수
 │   ├── db.py            # Supabase 접근
 │   ├── jobs.py          # 예약·이벤트 실행 단위 (app과 cli가 공유)
-│   ├── app.py           # Cloud Run 웹 서버 (/jobs/*, /webhooks/*)
+│   ├── app.py           # Cloud Run 웹 서버 (/jobs/*, /webhooks/*, /admin/*, /unsubscribe/*)
 │   └── cli.py           # 로컬 실행
 ├── data/sample/         # 평가용 리드(leads.json), 모의 답장(replies.json), 업로드 양식(leads_template.csv)
 ├── supabase/migrations/ # DB 스키마 (SQL)
