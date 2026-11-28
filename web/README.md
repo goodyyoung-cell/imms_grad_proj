@@ -61,3 +61,10 @@ Slack 알림의 버튼과 링크는 `ADMIN_WEB_URL` 뒤에 `/m/{메일 id}`(메�
 ## 배포
 
 정적 파일이므로 Vercel 같은 곳에 올립니다 (`vercel.json`에 단일 페이지 앱용 rewrite 포함). 올린 주소를 백엔드 `ALLOWED_ORIGINS`에 추가하고 `scripts/sync_secrets.sh`로 반영해야 브라우저에서 API를 부를 수 있습니다. 같은 주소를 `ADMIN_WEB_URL`에도 넣습니다.
+
+## 배포된 주소
+
+- 관리 화면: https://sdr-admin-web-xi.vercel.app (Vercel, 계정 mincepie12). 서버 ALLOWED_ORIGINS와 ADMIN_WEB_URL에 등록되어 있다.
+- web/Dockerfile과 
+ginx.conf는 Cloud Run에 올릴 때 쓰는 파일이다. Cloud Run 서비스 sdr-admin-web을 올렸으나 공개 설정(allUsers 호출 권한)이 없어 403이므로 쓰지 않는다.
+- 다시 배포: cd web; npx vercel@latest deploy --prod --yes --name sdr-admin-web.
