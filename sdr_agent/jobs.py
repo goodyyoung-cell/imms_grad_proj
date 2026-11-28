@@ -20,9 +20,11 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
 
+from . import feedback as feedback_mod
+from . import industry as industry_mod
 from .agent import MemoryRunLog, RunLog, SupabaseRunLog
 from .config import Settings, load_settings
-from .compliance import apply_footer, finalize
+from .compliance import apply_footer, finalize, finalize_options, finalize_subject
 from .db import Repo, get_client
 from .intake import ingest
 from .llm import get_llm
@@ -31,7 +33,7 @@ from .notify import notify
 from .outbox import Sender, get_sender
 from .toolkit.dart import DartClient
 from .toolkit.news import GoogleNewsClient, NaverNewsClient
-from .workflows.draft import compose_body, run_draft
+from .workflows.draft import compose_body, run_draft, run_rewrite
 from .workflows.call_script import render_text as render_call_script
 from .workflows.call_script import run_call_script, sent_phrase
 from .workflows.handoff import render_text, run_handoff
@@ -68,7 +70,83 @@ def _approval_data(lead: dict[str, Any], msg: dict[str, Any], score: dict | None
     return {"company": lead.get("company_name"), "name": lead.get("name"), "title": lead.get("title"),
             "subject": msg.get("subject"), "body": msg.get("body"), "kind": msg.get("kind"),
             "score": (score or {}).get("score"), "tags": (score or {}).get("tags") or [],
-            "customer_reply": customer_reply, "no_consent": not lead.get("consent_at")}
+            "customer_reply": customer_reply, "no_consent": not lead.get("consent_at"),
+            "subject_options": msg.get("subject_options") or [], "subject_choice": msg.get("subject_choice") or "general",
+            "hook": msg.get("hook"),
+            "feedback_count": sum(1 for c in (msg.get("citations") or []) if c.get("type") == "feedback")}
+
+
+def _post_approval(repo: Any, lead: dict[str, Any], msg: dict[str, Any], title: str, text: str,
+                   score: dict | None, customer_reply: str | None = None) -> None:
+    """승인 요청을 Slack에 올리고, 올린 카드의 위치를 메시지에 남긴다 (챗으로 고치면 카드도 갱신하려고)."""
+    ref: dict[str, Any] = {}
+    notify("approval", title, text, message_id=msg["id"], lead_id=lead["id"] if lead.get("id") else None,
+           data=_approval_data(lead, msg, score, customer_reply), slack_ref_out=ref)
+    if ref:
+        try:
+            repo.update_message(msg["id"], {"slack_ref": ref})
+        except Exception:
+            logger.exception("Slack 카드 위치 저장 실패: %s", msg["id"])
+
+
+def approval_card(message_id: str, *, repo: Any, settings: Settings) -> tuple[list[dict], str]:
+    """승인 대기 메일의 Slack 카드(blocks, 대체 텍스트)를 현재 내용으로 만든다."""
+    from . import slack
+
+    msg = repo.get_message(message_id)
+    lead = repo.get_lead(msg["lead_id"])
+    customer_reply = None
+    if msg["kind"] == "followup":
+        replies = repo.list_replies(lead["id"])
+        customer_reply = replies[-1]["body"] if replies else None
+    data = _approval_data(lead, msg, repo.latest_score(lead["id"]), customer_reply)
+    return (slack.approval_blocks(data, message_id, settings.admin_web_url),
+            f"메일 승인 요청: {lead.get('company_name')}")
+
+
+def refresh_approval_card(message_id: str, *, repo: Any, settings: Settings | None = None, client: Any = None) -> bool:
+    """초안이 바뀌었을 때(챗으로 다시 쓰기, 제목 선택) 올려 둔 Slack 승인 카드를 같은 내용으로 갱신한다."""
+    from . import slack
+
+    s = settings or load_settings()
+    try:
+        msg = repo.get_message(message_id)
+        ref = msg.get("slack_ref") or {}
+        client = client or slack.get_client(s)
+        if not (client and ref.get("channel") and ref.get("ts")) or msg["status"] != "pending_approval":
+            return False
+        blocks, fallback = approval_card(message_id, repo=repo, settings=s)
+        client.update_message(ref["channel"], ref["ts"], blocks, fallback)
+        return True
+    except Exception:
+        logger.exception("Slack 승인 카드 갱신 실패: %s", message_id)
+        return False
+
+
+def _news_clients(s: Settings) -> tuple[Any, Any]:
+    naver = (NaverNewsClient(s.naver_client_id, s.naver_client_secret, api=s.naver_search_api)
+             if s.naver_client_id and s.naver_client_secret else None)
+    return naver, GoogleNewsClient() if s.google_news_enabled else None
+
+
+def lead_context(repo: Any, lead: dict[str, Any], facts: list[dict], s: Settings, *,
+                 news_clients: tuple[Any, Any] | None = None, collect: bool = True) -> dict[str, Any]:
+    """초안·다시 쓰기에 넣을 업종 화두와 승인자 피드백. 어느 하나가 실패해도 초안은 만들어야 하므로 비어 있는 채로 돌려준다."""
+    key = industry_mod.classify(lead, facts)
+    items: list[dict] = []
+    if key:
+        try:
+            if collect:
+                naver, google = news_clients or _news_clients(s)
+                brief = industry_mod.ensure_brief(repo, key, naver, google)
+            else:
+                brief = repo.latest_industry_brief(key)
+            items = industry_mod.usable_items(brief)
+        except Exception:
+            logger.exception("업종 화두 준비 실패 (건너뜀): %s", key)
+    notes = feedback_mod.select_for(repo, lead.get("id"), key)
+    return {"industry_key": key, "industry_label": industry_mod.LABELS.get(key) if key else None,
+            "industry_items": items, "feedback": notes}
 
 
 def intake_leads(
@@ -145,8 +223,12 @@ def draft_emails(
     repo: Any = None,
     llm: LLM | None = None,
     new_log: NewLog | None = None,
+    news_clients: tuple[Any, Any] | None = None,
 ) -> list[dict[str, Any]]:
-    """리서치가 끝난 리드에게 보낼 첫 메일 초안을 만들어 승인 대기로 둔다. 발송하지 않는다."""
+    """리서치가 끝난 리드에게 보낼 첫 메일 초안을 만들어 승인 대기로 둔다. 발송하지 않는다.
+
+    초안에는 제목 후보 3개(일반·회사명 포함·소식 반영)와 오프닝 소재가 들어간다. 기본 제목은 일반 제목이고,
+    사람이 승인 화면이나 Slack에서 다른 후보로 바꿀 수 있다."""
     s = settings or load_settings()
     repo, new_log = _wire(s, repo, new_log)
     ids = lead_ids or repo.list_lead_ids("researched", limit)
@@ -165,18 +247,25 @@ def draft_emails(
                 out.append({"lead_id": lead_id, "status": "skipped", "reason": "이미 첫 메일 초안이 있음"})
                 continue
             log = new_log()
-            result = run_draft(lead, repo.list_facts(lead_id), repo.latest_score(lead_id), llm, log,
-                               booking_url=s.booking_url, trigger=trigger)
+            facts = repo.list_facts(lead_id)
+            ctx = lead_context(repo, lead, facts, s, news_clients=news_clients)
+            result = run_draft(lead, facts, repo.latest_score(lead_id), llm, log,
+                               booking_url=s.booking_url, trigger=trigger,
+                               industry_label=ctx["industry_label"], industry_items=ctx["industry_items"],
+                               feedback=ctx["feedback"])
             if not result["draft"]:
                 out.append({"lead_id": lead_id, "status": "no_draft", "run_id": result["run_id"],
                             "stop_reason": result["stop_reason"]})
                 continue
-            subject, body = finalize(result["draft"]["subject"], result["draft"]["body"], s, lead_id)
-            msg = repo.insert_message(lead_id, result["run_id"], "initial", {**result["draft"], "subject": subject, "body": body})
+            draft = result["draft"]
+            subject, body = finalize(draft["subject"], draft["body"], s, lead_id)
+            msg = repo.insert_message(lead_id, result["run_id"], "initial", {
+                **draft, "subject": subject, "body": body,
+                "subject_options": finalize_options(draft.get("subject_options") or [], s)})
             repo.set_status(lead_id, "awaiting_approval")
-            notify("approval", f"메일 승인 요청: {lead.get('company_name')} ({msg['id']})",
-                   f"제목: {msg['subject']}\n\n{msg['body']}", message_id=msg["id"], lead_id=lead_id,
-                   data=_approval_data(lead, msg, repo.latest_score(lead_id)))
+            feedback_mod.record_applied(repo, [c["id"] for c in draft.get("citations", []) if c.get("type") == "feedback"])
+            _post_approval(repo, lead, msg, f"메일 승인 요청: {lead.get('company_name')} ({msg['id']})",
+                           f"제목: {msg['subject']}\n\n{msg['body']}", repo.latest_score(lead_id))
             out.append({"lead_id": lead_id, "status": "drafted", "message_id": msg["id"], "run_id": result["run_id"]})
         except Exception as exc:
             logger.exception("초안 실패: %s", lead_id)
@@ -194,6 +283,7 @@ def decide_message(
     note: str | None = None,
     reason_code: str | None = None,
     review_seconds: int | None = None,
+    subject_option: str | None = None,
     settings: Settings | None = None,
     repo: Any = None,
     sender: Sender | None = None,
@@ -203,7 +293,8 @@ def decide_message(
     """사람의 승인 결정을 기록한다. 승인(또는 수정 승인)이면 바로 샌드박스로 발송한다.
     첫 메일이 나가면 전화 팔로업 과제와 콜 스크립트를 만든다.
 
-    평가용으로 반려 사유(reason_code), 수정 승인이면 수정 전 초안, 사람이 검토에 쓴 시간(review_seconds)도 남긴다."""
+    평가용으로 반려 사유(reason_code), 수정 승인이면 수정 전 초안, 사람이 검토에 쓴 시간(review_seconds)도 남긴다.
+    subject_option을 주면 승인 직전에 그 제목 후보로 바꾼다."""
     if decision not in ("approved", "rejected", "edited"):
         raise ValueError("decision은 approved, rejected, edited 중 하나입니다")
     if decision == "edited" and not (edited_body and edited_body.strip()):
@@ -215,6 +306,9 @@ def decide_message(
     msg = repo.get_message(message_id)
     if msg["status"] != "pending_approval":
         raise ValueError(f"승인 대기 중인 메시지가 아닙니다 (status={msg['status']})")
+    chosen = None
+    if subject_option and decision != "rejected":
+        chosen = _find_option(msg, subject_option)
 
     approval: dict[str, Any] = {"message_id": message_id, "decision": decision, "decided_by": decided_by,
                                 "channel": channel, "edited_body": edited_body, "note": note}
@@ -231,6 +325,8 @@ def decide_message(
         return {"message_id": message_id, "status": "rejected"}
 
     fields: dict[str, Any] = {"status": "approved"}
+    if chosen:
+        fields.update(subject=chosen["subject"], subject_choice=chosen["id"])
     if decision == "edited":
         # 사람이 고쳐도 AI 사용 고지, 수신 거부 안내, 전송자 정보는 빠질 수 없다
         fields["body"] = apply_footer(edited_body, s, msg["lead_id"])
@@ -242,6 +338,106 @@ def decide_message(
         except Exception as exc:  # 콜 스크립트 실패가 발송 결과를 바꾸지 않게
             logger.exception("콜 과제 생성 실패: %s", message_id)
             out["call_task"] = {"status": "failed", "error": f"{type(exc).__name__}: {exc}"}
+    return out
+
+
+def _find_option(msg: dict[str, Any], option_id: str) -> dict[str, Any]:
+    for o in msg.get("subject_options") or []:
+        if o.get("id") == option_id:
+            return o
+    raise ValueError(f"이 메일에는 '{option_id}' 제목 후보가 없습니다")
+
+
+def _pending_message(repo: Any, message_id: str) -> dict[str, Any]:
+    msg = repo.get_message(message_id)
+    if msg["status"] != "pending_approval":
+        raise ValueError(f"승인 대기 중인 메시지가 아닙니다 (status={msg['status']})")
+    return msg
+
+
+def _with_revision(msg: dict[str, Any], by: str, instruction: str | None) -> list[dict]:
+    """고치기 전의 제목·본문을 이전 버전으로 남긴다 (최근 10개)."""
+    rev = {"at": datetime.now(timezone.utc).isoformat(), "by": by, "instruction": instruction,
+           "subject": msg.get("subject"), "body": msg.get("body")}
+    return [*(msg.get("revisions") or []), rev][-10:]
+
+
+def choose_subject(message_id: str, option_id: str, by: str, *, settings: Settings | None = None,
+                   repo: Any = None, client: Any = None, refresh: bool = True) -> dict[str, Any]:
+    """승인 대기 메일의 제목을 후보 중 하나로 바꾼다 (general·company·hook)."""
+    s = settings or load_settings()
+    repo, _ = _wire(s, repo, None)
+    msg = _pending_message(repo, message_id)
+    opt = _find_option(msg, option_id)
+    out = repo.update_message(message_id, {"subject": opt["subject"], "subject_choice": option_id})
+    logger.info("제목 선택: %s -> %s by %s", message_id, option_id, by)
+    if refresh:
+        refresh_approval_card(message_id, repo=repo, settings=s, client=client)
+    return out
+
+
+def edit_message_text(message_id: str, by: str, *, subject: str | None = None, body: str | None = None,
+                      instruction: str | None = None, settings: Settings | None = None, repo: Any = None,
+                      client: Any = None) -> dict[str, Any]:
+    """사람이 불러 준 문구로 제목이나 본문을 직접 바꾼다. 본문을 바꿔도 AI 고지·수신 거부 안내·전송자 정보는 다시 붙는다."""
+    s = settings or load_settings()
+    repo, _ = _wire(s, repo, None)
+    msg = _pending_message(repo, message_id)
+    fields: dict[str, Any] = {}
+    if subject and subject.strip():
+        fields.update(subject=finalize_subject(subject, s), subject_choice="custom")
+    if body and body.strip():
+        fields["body"] = apply_footer(body, s, msg["lead_id"])
+    if not fields:
+        raise ValueError("바꿀 제목이나 본문이 필요합니다")
+    fields["revisions"] = _with_revision(msg, by, instruction or "직접 입력")
+    out = repo.update_message(message_id, fields)
+    refresh_approval_card(message_id, repo=repo, settings=s, client=client)
+    return out
+
+
+def rewrite_message(
+    message_id: str,
+    instruction: str,
+    by: str,
+    *,
+    part: str = "all",
+    settings: Settings | None = None,
+    repo: Any = None,
+    llm: LLM | None = None,
+    new_log: NewLog | None = None,
+    news_clients: tuple[Any, Any] | None = None,
+    client: Any = None,
+) -> dict[str, Any]:
+    """승인 대기 초안을 사용자의 지시에 맞게 에이전트가 다시 쓴다. 근거·소재·제목 규칙은 첫 초안과 같다.
+    part: all(제목과 본문), subject(제목 후보만), body(본문만). 고치기 전 버전은 revisions에 남는다."""
+    if part not in ("all", "subject", "body"):
+        raise ValueError("part는 all, subject, body 중 하나입니다")
+    if not (instruction or "").strip():
+        raise ValueError("어떻게 고칠지 지시가 필요합니다")
+    s = settings or load_settings()
+    repo, new_log = _wire(s, repo, new_log)
+    msg = _pending_message(repo, message_id)
+    lead = repo.get_lead(msg["lead_id"])
+    facts = repo.list_facts(lead["id"])
+    ctx = lead_context(repo, lead, facts, s, news_clients=news_clients, collect=False)
+    llm = llm or get_llm(None, s)
+    result = run_rewrite(lead, facts, msg, instruction.strip(), llm, new_log(), booking_url=s.booking_url,
+                         industry_label=ctx["industry_label"], industry_items=ctx["industry_items"],
+                         feedback=ctx["feedback"])
+    draft = result["draft"]
+    if not draft:
+        raise ValueError(f"다시 쓰지 못했습니다 ({result['stop_reason']}). 지시를 바꿔 다시 시도해 주세요")
+    subject, body = finalize(draft["subject"], draft["body"], s, lead["id"])
+    fields: dict[str, Any] = {"revisions": _with_revision(msg, by, instruction.strip())}
+    if part in ("all", "body"):
+        fields.update(body=body, hook=draft.get("hook"), citations=draft["citations"])
+    if part in ("all", "subject"):
+        fields.update(subject=subject, subject_options=finalize_options(draft["subject_options"], s),
+                      subject_choice="general")
+    out = repo.update_message(message_id, fields)
+    feedback_mod.record_applied(repo, [c["id"] for c in draft["citations"] if c.get("type") == "feedback"])
+    refresh_approval_card(message_id, repo=repo, settings=s, client=client)
     return out
 
 
@@ -317,11 +513,12 @@ def handle_reply(
     last = sent[-1] if sent else None
     # 수신 거부는 규칙으로 먼저 본다. 걸리면 LLM 키가 없어도 멈춘다
     if detect_unsubscribe(body):
-        llm, log = None, None
+        llm, log, notes = None, None, []
     else:
         llm = llm or get_llm(provider, s)
         log = new_log()
-    triage = run_reply_triage(lead, body, llm, log, last_message=last, trigger=trigger)
+        notes = feedback_mod.select_for(repo, lead_id, industry_mod.classify(lead, repo.list_facts(lead_id)))
+    triage = run_reply_triage(lead, body, llm, log, last_message=last, trigger=trigger, feedback=notes)
     action = triage["action"]
 
     reply = repo.insert_reply({
@@ -352,9 +549,9 @@ def handle_reply(
         answer["subject"], answer["body"] = finalize(answer["subject"], answer["body"], s, lead_id)
         msg = repo.insert_message(lead_id, triage["run_id"], "followup", answer)
         repo.set_status(lead_id, "awaiting_approval")
-        notify("approval", f"답변 승인 요청: {lead.get('company_name')} ({msg['id']})",
-               f"고객 답장:\n{body}\n\n답변 초안:\n{msg['body']}", message_id=msg["id"], lead_id=lead_id,
-               data=_approval_data(lead, msg, repo.latest_score(lead_id), customer_reply=body))
+        feedback_mod.record_applied(repo, [c["id"] for c in answer.get("citations", []) if c.get("type") == "feedback"])
+        _post_approval(repo, lead, msg, f"답변 승인 요청: {lead.get('company_name')} ({msg['id']})",
+                       f"고객 답장:\n{body}\n\n답변 초안:\n{msg['body']}", repo.latest_score(lead_id), customer_reply=body)
         out["message_id"] = msg["id"]
     elif action == "followup_later":
         repo.set_status(lead_id, "replied")
@@ -500,9 +697,12 @@ def create_call_task(
             llm = None
     sent_at = _parse_ts(msg.get("sent_at") or datetime.now(timezone.utc))
     due = call_due_at(sent_at, s.call_delay_minutes, s.call_hours_kst)
-    result = run_call_script(lead, repo.list_facts(lead["id"]), repo.latest_score(lead["id"]), msg, llm,
+    facts = repo.list_facts(lead["id"])
+    notes = feedback_mod.select_for(repo, lead["id"], industry_mod.classify(lead, facts)) if llm else []
+    result = run_call_script(lead, facts, repo.latest_score(lead["id"]), msg, llm,
                              new_log() if llm else None, booking_url=s.booking_url, trigger=trigger,
-                             when_sent=sent_phrase(sent_at, due))
+                             when_sent=sent_phrase(sent_at, due), feedback=notes)
+    feedback_mod.record_applied(repo, [c["id"] for c in result["script"].get("citations", []) if c.get("type") == "feedback"])
     task = repo.insert_call_task({"lead_id": lead["id"], "message_id": message_id, "run_id": result["run_id"],
                                   "script": result["script"], "due_at": due.isoformat()})
     text = render_call_script(result["script"], lead, due.strftime("%Y-%m-%d %H:%M KST"))

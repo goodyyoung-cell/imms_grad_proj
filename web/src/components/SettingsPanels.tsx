@@ -1,6 +1,8 @@
 import { useState } from "react";
+import { Link } from "react-router-dom";
 import { api } from "../api/client";
 import { useAction, useQuery } from "../api/hooks";
+import { useMemoryPath } from "../lib/chatContext";
 import { useToast } from "../toast";
 import { Badge, Card, Empty, ErrorBox, Loading } from "./ui";
 
@@ -37,6 +39,7 @@ const RULES = [
 /** 운영 설정·상태: 안전장치, 연동 상태, 연결 시험. 연동을 켠 날 가장 먼저 확인하는 화면 */
 export function StatusPanel() {
   const toast = useToast();
+  const memoryPath = useMemoryPath();
   const q = useQuery(() => api.status(), [], { refreshMs: 30000 });
   const unsub = useQuery(() => api.leads({ status: "unsubscribed", limit: 100 }), []);
   const test = useAction(async () => {
@@ -80,6 +83,22 @@ export function StatusPanel() {
             </dl>
             {!s.slack.configured && <p className="muted small">토큰과 채널을 Cloud Run에 등록하면 연결 시험을 할 수 있습니다. 방법은 docs/admin-slack.md에 있습니다.</p>}
           </Card>
+          {(s.chat || s.memory) && (
+            <Card title="AI 에이전트와 메모리" aside={<Link to={memoryPath} className="small">메모리 보기</Link>}>
+              <dl className="kv">
+                {s.chat && (
+                  <>
+                    <dt>AI 에이전트 대화</dt>
+                    <dd><Badge tone={s.chat.enabled ? "green" : "amber"}>{s.chat.enabled ? "사용 가능" : "사용 불가 (LLM 키 필요)"}</Badge></dd>
+                    <dt>Slack 대화</dt>
+                    <dd><Badge tone={s.chat.slack_events ? "green" : "gray"}>{s.chat.slack_events ? "이벤트 연결됨" : "연결 안 됨"}</Badge></dd>
+                  </>
+                )}
+                {s.memory && <><dt>사용 중인 메모</dt><dd>{s.memory.active_notes}건</dd></>}
+              </dl>
+              <p className="muted small">메모는 다음 메일, 답장, 통화 스크립트를 만들 때 자동으로 반영됩니다.</p>
+            </Card>
+          )}
         </div>
       )}
 

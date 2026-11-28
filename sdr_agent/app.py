@@ -19,14 +19,16 @@ import logging
 from datetime import datetime, timezone
 from urllib.parse import parse_qs
 
-from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Request, UploadFile
+from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, Header, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
 
 from . import auth as admin_auth
-from . import compliance, jobs, metrics, sheets, slack, webform
+from . import chat, compliance, jobs, metrics, sheets, slack, slack_chat, webform
+from . import feedback as feedback_mod
+from . import industry as industry_mod
 from .config import load_settings
 from .kb import default_kb
 from .notify import notify
@@ -41,7 +43,7 @@ app = FastAPI(title="SDR Agent", description="도메인 특화 AI SDR 에이전�
 app.add_middleware(
     CORSMiddleware,
     allow_origins=list(load_settings().allowed_origins),
-    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type"],
 )
 
@@ -323,6 +325,31 @@ async def webhook_slack_interactions(request: Request, repo: Repo = Depends(get_
     return JSONResponse(body or {})
 
 
+@app.post("/webhooks/slack/events")
+async def webhook_slack_events(request: Request, background: BackgroundTasks, repo: Repo = Depends(get_repo)) -> JSONResponse:
+    """Slack 이벤트(DM, 멘션, 스레드 답글)가 들어오는 곳. 서명으로만 보호한다.
+    3초 안에 응답해야 하므로 걸러서 작업만 만들고, 처리는 응답 뒤 백그라운드에서 한다 (slack_chat.py)."""
+    s = load_settings()
+    if not s.slack_signing_secret:
+        raise HTTPException(503, "SLACK_SIGNING_SECRET이 설정되지 않았습니다")
+    raw = await request.body()
+    if not slack.verify_signature(s.slack_signing_secret, request.headers.get("x-slack-request-timestamp"), raw,
+                                  request.headers.get("x-slack-signature")):
+        raise HTTPException(401, "서명 검증 실패")
+    try:
+        payload = json.loads(raw.decode())
+    except ValueError:
+        raise HTTPException(400, "본문을 읽을 수 없습니다")
+    if payload.get("type") == "url_verification":
+        return JSONResponse({"challenge": payload.get("challenge", "")})
+    if request.headers.get("x-slack-retry-num"):
+        return JSONResponse({})  # 재전송. 첫 요청을 이미 처리 중이다
+    job = await run_in_threadpool(slack_chat.plan, payload, settings=s, repo=repo)
+    if job:
+        background.add_task(slack_chat.process, job, settings=s, repo=repo)
+    return JSONResponse({})
+
+
 # --- 관리 화면 조회 ---
 
 def _with_lead(rows: list[dict], repo: Repo) -> list[dict]:
@@ -370,7 +397,7 @@ def admin_lead_detail(lead_id: str, repo: Repo = Depends(get_repo)) -> dict:
         "merged_leads": repo.merged_leads(lead_id),
         "facts": repo.list_facts(lead_id),
         "score": repo.latest_score(lead_id),
-        "messages": repo.list_messages(lead_id=lead_id),
+        "messages": _enrich_messages(repo.list_messages(lead_id=lead_id), repo),
         "replies": repo.list_replies(lead_id),
         "calls": calls,
         "handoffs": repo.list_handoffs(lead_id),
@@ -380,8 +407,25 @@ def admin_lead_detail(lead_id: str, repo: Repo = Depends(get_repo)) -> dict:
 
 @app.get("/admin/messages", dependencies=auth)
 def admin_messages(status: str = "pending_approval", limit: int = 50, repo: Repo = Depends(get_repo)) -> dict:
-    """메일 목록 (기본: 승인 대기). 각 메일에 리드 요약(lead) 포함."""
-    return {"messages": _with_lead(repo.list_messages(status=status, limit=limit), repo)}
+    """메일 목록 (기본: 승인 대기). 각 메일에 리드 요약(lead), 제목 후보·소재·이전 버전, 반영된 피드백(feedback_applied) 포함."""
+    return {"messages": _enrich_messages(_with_lead(repo.list_messages(status=status, limit=limit), repo), repo)}
+
+
+def _enrich_messages(rows: list[dict], repo: Repo) -> list[dict]:
+    """메일에 반영된 피드백 내용을 붙인다 (citations의 feedback id → 규칙 문장). 피드백 표를 못 읽어도 목록은 준다."""
+    ids = [c["id"] for r in rows for c in (r.get("citations") or []) if c.get("type") == "feedback"]
+    try:
+        notes = feedback_mod.with_labels(list(repo.feedback_by_ids(ids).values()), repo) if ids else []
+    except Exception:
+        logger.exception("반영된 피드백 조회 실패 (건너뜀)")
+        notes = []
+    by_id = {n["id"]: n for n in notes}
+    out = []
+    for r in rows:
+        applied = [{k: by_id[c["id"]][k] for k in ("id", "scope", "scope_key", "scope_label", "kind", "text")}
+                   for c in (r.get("citations") or []) if c.get("type") == "feedback" and c["id"] in by_id]
+        out.append({**r, "feedback_applied": applied})
+    return out
 
 
 @app.get("/admin/calls", dependencies=auth)
@@ -471,7 +515,17 @@ def admin_status(repo: Repo = Depends(get_repo)) -> dict:
                        "sent_today": repo.count_sent_today(), "sender_name": s.sender_name,
                        "sender_contact": s.sender_contact},
         "knowledge_docs": len({c.id.split("#", 1)[0] for c in default_kb().chunks}),
+        "chat": {"enabled": bool(s.anthropic_api_key or (s.gemini_api_key and s.gemini_model)),
+                 "slack_events": bool(s.slack_bot_token and s.slack_signing_secret)},
+        "memory": {"active_notes": _count_feedback(repo)},
     }
+
+
+def _count_feedback(repo: Repo) -> int | None:
+    try:
+        return repo.count_feedback()
+    except Exception:  # 마이그레이션 전에는 표가 없다
+        return None
 
 
 class NotifyTest(BaseModel):
@@ -541,6 +595,7 @@ class Decision(BaseModel):
     note: str | None = None
     reason_code: str | None = None     # 반려 사유: factual_error | tone | wrong_target | forbidden_phrase | other
     review_seconds: int | None = None  # 화면에서 검토에 쓴 시간(초)
+    subject_option: str | None = None  # 승인 직전에 바꿀 제목 후보: general | company | hook
 
 
 @app.post("/admin/messages/{message_id}/decision")
@@ -549,11 +604,160 @@ def admin_decide(message_id: str, d: Decision, p: admin_auth.Principal = Depends
     try:
         return jobs.decide_message(message_id, d.decision, who(d.decided_by, p), channel="admin",
                                    edited_body=d.edited_body, note=d.note, reason_code=d.reason_code,
-                                   review_seconds=d.review_seconds)
+                                   review_seconds=d.review_seconds, subject_option=d.subject_option)
     except LookupError as exc:
         raise HTTPException(404, str(exc))
     except ValueError as exc:
         raise HTTPException(400, str(exc))
+
+
+class SubjectChoice(BaseModel):
+    option_id: str  # general | company | hook
+
+
+@app.post("/admin/messages/{message_id}/subject")
+def admin_choose_subject(message_id: str, c: SubjectChoice, p: admin_auth.Principal = Depends(principal),
+                         repo: Repo = Depends(get_repo)) -> dict:
+    """승인 대기 메일의 제목을 후보 중 하나로 바꾼다. 올려 둔 Slack 승인 카드도 같은 제목으로 갱신된다."""
+    try:
+        return jobs.choose_subject(message_id, c.option_id, who(None, p), repo=repo)
+    except LookupError as exc:
+        raise HTTPException(404, str(exc))
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+
+
+# --- 피드백 메모리 ---
+
+@app.get("/admin/industries", dependencies=auth)
+def admin_industries() -> dict:
+    """피드백·소재 분류에 쓰는 업종 목록."""
+    return {"industries": industry_mod.industry_list()}
+
+
+@app.get("/admin/feedback", dependencies=auth)
+def admin_feedback_list(scope: str | None = None, status: str = "active", lead_id: str | None = None, limit: int = 200,
+                        repo: Repo = Depends(get_repo)) -> dict:
+    """피드백 메모. lead_id를 주면 그 고객에게 적용되는 것(고객+업종+전체)을 돌려준다."""
+    if status not in ("active", "archived", "all"):
+        raise HTTPException(400, "status는 active, archived, all 중 하나입니다")
+    if lead_id:
+        try:
+            lead = repo.get_lead(lead_id)
+        except LookupError as exc:
+            raise HTTPException(404, str(exc))
+        key = industry_mod.classify(lead, repo.list_facts(lead_id))
+        notes = feedback_mod.select_for(repo, lead_id, key, limit=50) if status == "active" else \
+            repo.list_feedback(scope="lead", scope_key=lead_id, status=status, limit=limit)
+    else:
+        notes = repo.list_feedback(scope=scope, status=status, limit=min(limit, 500))
+    return {"notes": feedback_mod.with_labels(notes, repo)}
+
+
+class FeedbackIn(BaseModel):
+    text: str
+    scope: str                      # lead | industry | global
+    scope_key: str | None = None    # lead: 리드 id, industry: 업종 키
+    kind: str | None = None         # tone | length | topic | avoid | cta | other
+
+
+class FeedbackPatch(BaseModel):
+    text: str | None = None
+    scope: str | None = None
+    scope_key: str | None = None
+    kind: str | None = None
+    status: str | None = None       # active | archived
+
+
+@app.post("/admin/feedback")
+def admin_feedback_add(f: FeedbackIn, p: admin_auth.Principal = Depends(principal), repo: Repo = Depends(get_repo)) -> dict:
+    try:
+        text = feedback_mod.sanitize(f.text)
+        scope, key, kind = feedback_mod.validate_note(f.scope, f.scope_key, f.kind)
+        if scope == "lead":
+            repo.get_lead(key)
+    except feedback_mod.FeedbackError as exc:
+        raise HTTPException(400, str(exc))
+    except LookupError as exc:
+        raise HTTPException(404, str(exc))
+    row = repo.insert_feedback({"scope": scope, "scope_key": key, "kind": kind, "text": text, "source": "manual",
+                                "created_by": who(None, p)})
+    return feedback_mod.with_labels([row], repo)[0]
+
+
+@app.patch("/admin/feedback/{feedback_id}", dependencies=auth)
+def admin_feedback_patch(feedback_id: str, f: FeedbackPatch, repo: Repo = Depends(get_repo)) -> dict:
+    try:
+        cur = repo.get_feedback(feedback_id)
+        fields: dict = {}
+        if f.text is not None:
+            fields["text"] = feedback_mod.sanitize(f.text)
+        if f.scope is not None or f.scope_key is not None or f.kind is not None:
+            scope, key, kind = feedback_mod.validate_note(f.scope or cur["scope"], f.scope_key if f.scope_key is not None
+                                                           else (None if (f.scope or cur["scope"]) == "global" else cur["scope_key"]),
+                                                           f.kind or cur["kind"])
+            fields.update(scope=scope, scope_key=key, kind=kind)
+        if f.status is not None:
+            if f.status not in ("active", "archived"):
+                raise HTTPException(400, "status는 active, archived 중 하나입니다")
+            fields["status"] = f.status
+        if not fields:
+            raise HTTPException(400, "바꿀 내용이 없습니다")
+        row = repo.update_feedback(feedback_id, fields)
+    except feedback_mod.FeedbackError as exc:
+        raise HTTPException(400, str(exc))
+    except LookupError as exc:
+        raise HTTPException(404, str(exc))
+    return feedback_mod.with_labels([row], repo)[0]
+
+
+@app.delete("/admin/feedback/{feedback_id}", dependencies=auth)
+def admin_feedback_delete(feedback_id: str, repo: Repo = Depends(get_repo)) -> dict:
+    try:
+        repo.get_feedback(feedback_id)
+    except LookupError as exc:
+        raise HTTPException(404, str(exc))
+    repo.delete_feedback(feedback_id)
+    return {"ok": True}
+
+
+# --- 대화형 에이전트 (관리 화면 우측 패널. Slack은 /webhooks/slack/events) ---
+
+class ChatContext(BaseModel):
+    screen: str | None = None
+    message_id: str | None = None
+    lead_id: str | None = None
+
+
+class ChatIn(BaseModel):
+    message: str
+    session_id: str | None = None
+    context: ChatContext | None = None
+
+
+@app.post("/admin/chat")
+def admin_chat(c: ChatIn, p: admin_auth.Principal = Depends(principal), repo: Repo = Depends(get_repo)) -> dict:
+    """에이전트에게 말을 건다. 답변과 이번에 실제로 일어난 일(actions)을 돌려준다. 10~60초 걸릴 수 있다 (스트리밍 없음)."""
+    by = who(None, p)
+    if not webform.allow(f"chat:{by}"):
+        raise HTTPException(429, "잠시 후 다시 시도해 주세요")
+    try:
+        return chat.run_chat(c.message, user=by, channel="web", session_id=c.session_id,
+                             context=c.context.model_dump() if c.context else None, repo=repo)
+    except LookupError as exc:
+        raise HTTPException(404, str(exc))
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    except RuntimeError as exc:
+        raise HTTPException(503, str(exc))
+
+
+@app.get("/admin/chat/sessions/{session_id}", dependencies=auth)
+def admin_chat_session(session_id: str, repo: Repo = Depends(get_repo)) -> dict:
+    try:
+        return chat.session_turns(repo, session_id)
+    except LookupError as exc:
+        raise HTTPException(404, str(exc))
 
 
 class UnsubscribeConfirm(BaseModel):

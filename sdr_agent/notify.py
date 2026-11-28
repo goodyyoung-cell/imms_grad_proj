@@ -42,8 +42,10 @@ def notify(
     data: dict[str, Any] | None = None,
     settings: Settings | None = None,
     client: slack.SlackClient | None = None,
+    slack_ref_out: dict[str, Any] | None = None,
 ) -> bool:
-    """로그에 남기고 Slack에도 올렸으면 True. 절대 예외를 던지지 않는다."""
+    """로그에 남기고 Slack에도 올렸으면 True. 절대 예외를 던지지 않는다.
+    slack_ref_out을 주면 올린 메시지의 위치({channel, ts})를 채워 준다 (나중에 승인 카드를 고칠 때 쓴다)."""
     logger.info("[알림:%s] %s\n%s", kind, title, text)
     try:
         s = settings or load_settings()
@@ -59,7 +61,9 @@ def notify(
             url = deep_link(s.admin_web_url, lead_id=lead_id, call_id=call_id, home=kind == "reminder")
             blocks = slack.notice_blocks(kind, title, text, url)
             fallback = f"{slack.KIND_LABEL.get(kind, kind)}: {title}"
-        client.post_message(s.slack_channel, blocks, fallback)
+        posted = client.post_message(s.slack_channel, blocks, fallback)
+        if slack_ref_out is not None and isinstance(posted, dict) and posted.get("ts"):
+            slack_ref_out.update({"channel": posted.get("channel") or s.slack_channel, "ts": posted["ts"]})
         return True
     except Exception:  # 알림 실패가 영업 흐름을 막아서는 안 된다
         logger.exception("Slack 알림 실패 (%s)", kind)

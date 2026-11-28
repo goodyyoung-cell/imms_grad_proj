@@ -1,11 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api/client";
+import { errorText } from "../api/errors";
 import { invalidate, useAction, useQuery } from "../api/hooks";
+import { pushChatFocus } from "../lib/chatContext";
 import { complianceChecks } from "../lib/compliance";
 import { kstDateTime } from "../lib/format";
 import { MESSAGE_STATUS, REASON_CODES } from "../lib/labels";
+import { selectSubjectOption, subjectChoiceOf, subjectOptionsOf } from "../lib/subject";
 import { useToast } from "../toast";
-import type { Message } from "../types";
+import type { Message, SubjectChoice, SubjectOption } from "../types";
+import { FeedbackAppliedList, HookBox, RevisionViewer, SubjectPicker } from "./DraftMeta";
 import { Evidence, ScoreBreakdown } from "./Evidence";
 import { AiMark, Badge, ErrorBox, Loading, Score } from "./ui";
 
@@ -26,15 +30,39 @@ export function ApprovalPanel({ message, onDecided, shortcuts = false }: Props) 
   const [reason, setReason] = useState("");
   const [note, setNote] = useState("");
   const shownAt = useRef(Date.now());
+  // 제목 후보를 누르면 서버 응답을 기다리지 않고 바로 보여 주고, 실패하면 되돌린다
+  const [pick, setPick] = useState<{ subject: string; choice: SubjectChoice } | null>(null);
+  const [subjectBusy, setSubjectBusy] = useState(false);
+  const [subjectError, setSubjectError] = useState<string | null>(null);
 
   useEffect(() => {
     setEditing(false); setBody(message.body); setRejecting(false); setReason(""); setNote("");
     shownAt.current = Date.now();
   }, [message.id, message.body]);
+  useEffect(() => { setPick(null); setSubjectError(null); }, [message.id, message.subject, message.subject_choice]);
+  // 챗(AI 에이전트)이 "이 메일"이 무엇인지 알도록 알려 둔다
+  useEffect(() => pushChatFocus({ message_id: message.id, lead_id: message.lead_id }), [message.id, message.lead_id]);
 
   const pending = message.status === "pending_approval";
   const changed = body.trim() !== message.body.trim();
   const seconds = () => Math.round((Date.now() - shownAt.current) / 1000);
+
+  const subject = pick?.subject ?? message.subject;
+  const choice = pick?.choice ?? subjectChoiceOf(message);
+  const chooseSubject = async (o: SubjectOption) => {
+    if (subjectBusy || !pending) return;
+    const next = selectSubjectOption({ subject, subject_options: message.subject_options, subject_choice: choice }, o.id);
+    if (!next) return;
+    const before = pick;
+    setPick({ subject: next.subject, choice: next.subject_choice }); setSubjectBusy(true); setSubjectError(null);
+    try {
+      await api.setSubject(message.id, o.id);
+      invalidate();
+    } catch (e) {
+      setPick(before);
+      setSubjectError(errorText(e, "제목을 바꾸지 못했습니다"));
+    } finally { setSubjectBusy(false); }
+  };
 
   const decide = useAction(async (decision: "approved" | "edited" | "rejected") => {
     await api.decide(message.id, {
@@ -96,8 +124,10 @@ export function ApprovalPanel({ message, onDecided, shortcuts = false }: Props) 
 
       <div className="approval-grid">
         <div className="approval-mail">
+          <SubjectPicker options={subjectOptionsOf(message)} choice={choice} disabled={!pending || subjectBusy} error={subjectError} onSelect={chooseSubject} />
+          {message.hook && <HookBox hook={message.hook} />}
           <div className="mail">
-            <div className="mail-subject">{message.subject}</div>
+            <div className="mail-subject">{subject}</div>
             {editing ? (
               <textarea className="mail-edit" value={body} rows={16} onChange={(e) => setBody(e.target.value)} aria-label="메일 본문 수정" />
             ) : (
@@ -105,6 +135,8 @@ export function ApprovalPanel({ message, onDecided, shortcuts = false }: Props) 
             )}
           </div>
           {changed && <p className="notice warn">본문을 고쳤습니다. 승인하면 수정본이 발송되고 원문과 함께 기록됩니다.</p>}
+          <FeedbackAppliedList items={message.feedback_applied ?? []} />
+          <RevisionViewer key={message.revisions?.length ?? 0} revisions={message.revisions ?? []} current={{ subject, body: message.body }} />
         </div>
 
         <aside className="approval-side">

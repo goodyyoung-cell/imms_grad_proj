@@ -1,6 +1,7 @@
 import type {
-  Approval, CallOutcomeInput, CallTask, DecisionInput, ImportResult, KbDoc, Lead, LeadDetail, LeadList, Message, ReplyRow, Run,
-  RunDetail, Summary, SystemStatus,
+  Approval, CallOutcomeInput, CallTask, ChatContext, ChatReply, ChatSession, DecisionInput, FeedbackInput, FeedbackNote, FeedbackPatch,
+  ImportResult, Industry, KbDoc, Lead, LeadDetail, LeadList, Message, ReplyRow, Run,
+  RunDetail, SubjectOptionId, Summary, SystemStatus,
 } from "../types";
 import { ApiError } from "./errors";
 import { mockRequest } from "./mock";
@@ -82,6 +83,21 @@ export const api = {
 
   decide: (id: string, d: DecisionInput) =>
     request<Record<string, unknown>>("POST", `/admin/messages/${id}/decision`, d),
+  setSubject: (id: string, optionId: SubjectOptionId) =>
+    request<Message>("POST", `/admin/messages/${id}/subject`, { option_id: optionId }),
+
+  // 피드백 메모리
+  feedback: (p: { scope?: string; status?: string; lead_id?: string; limit?: number } = {}) =>
+    request<{ notes: FeedbackNote[] }>("GET", "/admin/feedback" + qs({ limit: 200, ...p })).then((r) => r.notes),
+  addFeedback: (n: FeedbackInput) => request<FeedbackNote>("POST", "/admin/feedback", n),
+  updateFeedback: (id: string, p: FeedbackPatch) => request<FeedbackNote>("PATCH", `/admin/feedback/${id}`, p),
+  deleteFeedback: (id: string) => request<{ ok: boolean }>("DELETE", `/admin/feedback/${id}`),
+  industries: () => request<{ industries: Industry[] }>("GET", "/admin/industries").then((r) => r.industries),
+
+  // AI 에이전트 대화. 답이 올 때까지 10~60초 걸릴 수 있다.
+  chat: (message: string, sessionId: string | null, context: ChatContext) =>
+    request<ChatReply>("POST", "/admin/chat", { session_id: sessionId, message, context }),
+  chatSession: (id: string) => request<ChatSession>("GET", `/admin/chat/sessions/${encodeURIComponent(id)}`),
   callOutcome: (id: string, o: CallOutcomeInput) =>
     request<Record<string, unknown>>("POST", `/admin/calls/${id}/outcome`, o),
   confirmUnsubscribe: (leadId: string, note?: string) =>

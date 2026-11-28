@@ -1,4 +1,4 @@
-import type { LeadStatus, MessageStatus, Outcome, ReplyClass, Workflow } from "../types";
+import type { FeedbackKind, FeedbackScope, FeedbackSource, HookType, LeadStatus, MessageStatus, Outcome, ReplyClass, SubjectChoice, Workflow } from "../types";
 
 export const LEAD_STATUS: Record<LeadStatus, { label: string; hint: string; tone: Tone }> = {
   new: { label: "신규", hint: "조사 대기", tone: "gray" },
@@ -123,4 +123,46 @@ export const KB_DOC: Record<string, string> = {
 export function kbLabel(id: string): string {
   const [doc, heading] = id.split("#");
   return `${KB_DOC[doc] ?? doc}${heading ? ` › ${heading}` : ""}`;
+}
+
+export const SUBJECT_CHOICE: Record<SubjectChoice, string> = {
+  general: "일반 제목",
+  company: "회사명 포함",
+  hook: "소식 반영",
+  custom: "직접 수정",
+};
+
+export const HOOK_TYPE: Record<HookType, string> = {
+  company: "회사 소식",
+  industry: "업종 이슈",
+  inquiry: "문의 사유",
+};
+
+export const FEEDBACK_KIND: Record<FeedbackKind, string> = {
+  tone: "어조",
+  length: "길이",
+  topic: "소재",
+  avoid: "금지",
+  cta: "행동 유도",
+  other: "기타",
+};
+
+export const FEEDBACK_SCOPE: Record<FeedbackScope, { label: string; tone: Tone }> = {
+  lead: { label: "고객", tone: "blue" },
+  industry: { label: "업종", tone: "violet" },
+  global: { label: "전체", tone: "gray" },
+};
+
+export const FEEDBACK_SOURCE: Record<FeedbackSource, string> = {
+  chat_web: "AI 에이전트(웹)",
+  chat_slack: "AI 에이전트(Slack)",
+  manual: "직접 입력",
+};
+
+/** 승인 이력의 채널. 챗으로 승인·반려한 기록은 chat_web, chat_slack */
+export function channelLabel(channel: string | null | undefined): string {
+  if (channel === "slack") return "Slack";
+  if (channel === "chat_web") return "AI 에이전트(웹)";
+  if (channel === "chat_slack") return "AI 에이전트(Slack)";
+  return "관리 화면";
 }

@@ -1,4 +1,5 @@
 import { useState, type ReactNode } from "react";
+import { NOT_DEPLOYED } from "../api/errors";
 import { LEAD_STATUS, type Tone } from "../lib/labels";
 import type { LeadStatus } from "../types";
 
@@ -33,7 +34,7 @@ export function Loading({ text = "불러오는 중" }: { text?: string }) {
 }
 
 export function ErrorBox({ message, onRetry }: { message: string; onRetry?: () => void }) {
-  if (message === "Not Found") message = "이 기능은 아직 서버에 배포되지 않았습니다. 백엔드 최신 버전을 배포하면 보입니다.";
+  if (message === "Not Found") message = NOT_DEPLOYED;
   return (
     <div className="state error" role="alert">
       <span>{message}</span>

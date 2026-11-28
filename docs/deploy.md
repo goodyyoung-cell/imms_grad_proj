@@ -143,6 +143,9 @@ gcloud run deploy sdr-agent --source . --region asia-northeast3 \
 
 - `--allow-unauthenticated`: 승인 버튼 웹훅이 외부에서 들어와야 해서 공개로 둔다. 대신 `/jobs/*`는 `JOB_TOKEN`으로 막는다.
 - `--timeout 3600`: 에이전트가 리드 여러 건을 조사하면 수 분이 걸린다.
+- `--no-cpu-throttling`: Slack 대화(`/webhooks/slack/events`)는 이벤트에 먼저 응답하고 뒤에서 처리한다. 요청이 끝난 뒤에도 CPU가 줄지 않아야 답이 나간다 (`--min-instances 1`과 함께 쓴다).
+- 환경변수를 바꿀 때는 `--update-env-vars`나 `--flags-file`을 쓴다. `--env-vars-file`은 기존 환경변수를 모두 지우고 파일의 값으로 바꾼다.
+- 새 기능(`20261128000000_chat_memory.sql`)은 마이그레이션을 먼저 적용한 뒤 배포한다. 표가 없으면 제목 후보 저장과 메모리 API가 실패한다.
 
 확인:
 

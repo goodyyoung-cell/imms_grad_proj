@@ -20,6 +20,7 @@ import json
 from typing import Any
 
 from ..agent import RunLog, Tool, ToolRegistry, run_agent
+from ..feedback import FEEDBACK_RULE, check_ids, goal_block
 from ..kb import default_kb
 from ..llm.base import LLM
 from ..toolkit.knowledge import GroundingError, KnowledgeContext
@@ -82,7 +83,8 @@ def sent_phrase(sent_at, call_at) -> str:
     return f"{s.month}월 {s.day}일에"
 
 
-def build_goal(lead: dict, facts: list[dict], score: dict | None, sent: dict, when_sent: str = "조금 전에") -> str:
+def build_goal(lead: dict, facts: list[dict], score: dict | None, sent: dict, when_sent: str = "조금 전에",
+               feedback: list[dict] | None = None) -> str:
     card = {k: lead.get(k) for k in ("name", "company_name", "title", "source", "notes")}
     fact_card = [{"fact_id": f["id"], "field": f["field"], "value": f["value"]} for f in facts]
     return (
@@ -92,7 +94,7 @@ def build_goal(lead: dict, facts: list[dict], score: dict | None, sent: dict, wh
         f"선별 근거 태그: {json.dumps((score or {}).get('tags', []), ensure_ascii=False)}\n"
         f"메일을 보낸 때 (통화 시점 기준, 이 표현을 그대로 쓰세요): {when_sent}\n"
         f"보낸 메일 제목: {sent.get('subject')}\n보낸 메일 본문:\n\"\"\"\n{(sent.get('body') or '')[:3000]}\n\"\"\""
-    )
+    ) + goal_block(feedback or [])
 
 
 def default_objections(limit: int = 3) -> list[dict]:
@@ -144,11 +146,13 @@ def run_call_script(
     trigger: str = "email_sent",
     max_steps: int = 8,
     when_sent: str = "조금 전에",
+    feedback: list[dict] | None = None,
 ) -> dict[str, Any]:
     if llm is None or log is None:
         return {"run_id": None, "by": "rule", "script": assemble(lead, sent, {}, booking_url, when_sent)}
 
     kctx = knowledge or KnowledgeContext()
+    feedback = feedback or []
     fact_ids = {f["id"] for f in facts}
 
     def check_facts(items: list[dict]) -> list[str]:
@@ -162,8 +166,10 @@ def run_call_script(
 
     def submit_call_script(email_summary: str, meeting_ask: str, compelling_questions: list[dict],
                            objections: list[dict], voicemail: str, opening_hook: str = "",
-                           talking_points: list[dict] | None = None) -> dict:
+                           talking_points: list[dict] | None = None,
+                           feedback_ids: list[str] | None = None) -> dict:
         talking_points = talking_points or []
+        fb = check_ids(feedback_ids, feedback)
         if len(compelling_questions) < MIN_CR_QUESTIONS:
             raise GroundingError(f"compelling_questions를 {MIN_CR_QUESTIONS}개 이상 쓰세요.")
         if any(not (q.get("question") and q.get("listen_for")) for q in compelling_questions):
@@ -184,7 +190,7 @@ def run_call_script(
                 "talking_points": talking_points, "compelling_questions": compelling_questions,
                 "objections": objections, "voicemail": voicemail,
                 "citations": [{"type": "fact", "id": i} for i in dict.fromkeys(used_facts)]
-                + [{"type": "kb", "id": i} for i in kb_ids]}
+                + [{"type": "kb", "id": i} for i in kb_ids] + [{"type": "feedback", "id": i} for i in fb]}
 
     ids = {"type": "array", "items": {"type": "string"}}
     item_tp = {"type": "object", "properties": {"text": {"type": "string"}, "fact_ids": ids, "kb_ids": ids},
@@ -206,10 +212,12 @@ def run_call_script(
                  "compelling_questions": {"type": "array", "items": item_cr},
                  "objections": {"type": "array", "items": item_ob},
                  "voicemail": {"type": "string"},
+                 "feedback_ids": {"type": "array", "items": {"type": "string"}},
              }, "required": ["email_summary", "meeting_ask", "compelling_questions", "objections", "voicemail"]},
              submit_call_script, terminal=True),
     ])
-    result = run_agent(llm, SYSTEM, build_goal(lead, facts, score, sent, when_sent), registry, log,
+    result = run_agent(llm, SYSTEM + (FEEDBACK_RULE if feedback else ""),
+                       build_goal(lead, facts, score, sent, when_sent, feedback), registry, log,
                        workflow="call_script", trigger=trigger, lead_id=lead.get("id"), max_steps=max_steps)
     parts = result.terminal_output or {}
     return {"run_id": log.run_id, "by": "agent" if parts else "rule",

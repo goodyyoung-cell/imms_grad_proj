@@ -9,16 +9,18 @@ export function Evidence({ citations, facts, kbDocs }: { citations: Citation[]; 
   const used = citations.filter((c) => c.type === "fact").map((c) => byId.get(c.id)).filter((f): f is Fact => !!f);
   const kb = [...new Set(citations.filter((c) => c.type === "kb").map((c) => c.id))];
   const missing = citations.filter((c) => c.type === "fact" && !byId.has(c.id)).length;
+  const industry = new Set(citations.filter((c) => c.type === "industry").map((c) => c.id)).size;
   return (
     <div className="evidence">
       <h4>이 메일의 근거</h4>
-      {used.length === 0 && kb.length === 0 && <p className="muted">연결된 근거가 없습니다. 내용을 직접 확인해 주세요.</p>}
+      {used.length === 0 && kb.length === 0 && industry === 0 && <p className="muted">연결된 근거가 없습니다. 내용을 직접 확인해 주세요.</p>}
       {used.length > 0 && (
         <ul className="fact-list">
           {used.map((f) => <FactItem key={f.id} fact={f} />)}
         </ul>
       )}
       {missing > 0 && <p className="muted">출처를 찾지 못한 근거 {missing}건</p>}
+      {industry > 0 && <p className="muted small">업종 브리프 기사 {industry}건을 참고했습니다.</p>}
       {kb.length > 0 && (
         <>
           <h5>승인된 회사 자료</h5>

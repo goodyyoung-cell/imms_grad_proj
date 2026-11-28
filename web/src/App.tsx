@@ -3,6 +3,7 @@ import { useAuth } from "./auth";
 import { Login } from "./Login";
 import { DesignA } from "./designs/a/DesignA";
 import { DesignB } from "./designs/b/DesignB";
+import { ChatPanel, ChatProvider } from "./components/Chat";
 
 export const DESIGN_KEY = "sdr_design";
 export const currentDesign = (): "a" | "b" => (localStorage.getItem(DESIGN_KEY) === "b" ? "b" : "a");
@@ -27,14 +28,17 @@ function RequireAuth({ children }: { children: JSX.Element }) {
 export default function App() {
   const { name } = useAuth();
   return (
-    <Routes>
-      <Route path="/login" element={name ? <Navigate to={`/${currentDesign()}`} replace /> : <Login />} />
-      <Route path="/m/:id" element={<RequireAuth><DeepLink kind="m" /></RequireAuth>} />
-      <Route path="/l/:id" element={<RequireAuth><DeepLink kind="l" /></RequireAuth>} />
-      <Route path="/c/:id" element={<RequireAuth><DeepLink kind="c" /></RequireAuth>} />
-      <Route path="/a/*" element={<RequireAuth><DesignA /></RequireAuth>} />
-      <Route path="/b/*" element={<RequireAuth><DesignB /></RequireAuth>} />
-      <Route path="*" element={<Navigate to={`/${currentDesign()}`} replace />} />
-    </Routes>
+    <ChatProvider>
+      <Routes>
+        <Route path="/login" element={name ? <Navigate to={`/${currentDesign()}`} replace /> : <Login />} />
+        <Route path="/m/:id" element={<RequireAuth><DeepLink kind="m" /></RequireAuth>} />
+        <Route path="/l/:id" element={<RequireAuth><DeepLink kind="l" /></RequireAuth>} />
+        <Route path="/c/:id" element={<RequireAuth><DeepLink kind="c" /></RequireAuth>} />
+        <Route path="/a/*" element={<RequireAuth><DesignA /></RequireAuth>} />
+        <Route path="/b/*" element={<RequireAuth><DesignB /></RequireAuth>} />
+        <Route path="*" element={<Navigate to={`/${currentDesign()}`} replace />} />
+      </Routes>
+      {name && <ChatPanel />}
+    </ChatProvider>
   );
 }

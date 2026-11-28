@@ -33,7 +33,41 @@ export interface Lead extends LeadBrief {
   tags?: string[];
 }
 
-export interface Citation { id: string; type: "fact" | "kb" }
+export interface Citation { id: string; type: "fact" | "kb" | "feedback" | "industry" }
+
+export type SubjectOptionId = "general" | "company" | "hook";
+export type SubjectChoice = SubjectOptionId | "custom";
+export interface SubjectOption { id: SubjectOptionId; label: string; subject: string }
+
+export type HookType = "company" | "industry" | "inquiry";
+export interface Hook { type: HookType; summary: string; source_url: string | null; source_title: string | null }
+
+export interface Revision { at: string; by: string; instruction: string; subject: string; body: string }
+
+export type FeedbackScope = "lead" | "industry" | "global";
+export type FeedbackKind = "tone" | "length" | "topic" | "avoid" | "cta" | "other";
+export type FeedbackSource = "chat_web" | "chat_slack" | "manual";
+export type FeedbackStatus = "active" | "archived";
+
+export interface FeedbackApplied { id: string; scope: FeedbackScope; scope_key: string | null; scope_label: string; kind: FeedbackKind; text: string }
+
+export interface FeedbackNote {
+  id: string;
+  scope: FeedbackScope;
+  scope_key: string | null;
+  scope_label: string;
+  kind: FeedbackKind;
+  text: string;
+  source: FeedbackSource;
+  created_by: string;
+  status: FeedbackStatus;
+  applied_count: number;
+  created_at: string;
+}
+
+export interface FeedbackInput { text: string; scope: FeedbackScope; scope_key?: string | null; kind?: FeedbackKind }
+export interface FeedbackPatch { text?: string; scope?: FeedbackScope; scope_key?: string | null; kind?: FeedbackKind; status?: FeedbackStatus }
+export interface Industry { key: string; label: string }
 
 export interface Message {
   id: string;
@@ -48,7 +82,20 @@ export interface Message {
   created_at: string;
   sent_at: string | null;
   lead?: LeadBrief | null;
+  // 소식 기반 초안과 피드백 메모리 (구버전 서버에는 없다)
+  subject_options?: SubjectOption[];
+  subject_choice?: SubjectChoice;
+  hook?: Hook | null;
+  revisions?: Revision[];
+  feedback_applied?: FeedbackApplied[];
 }
+
+export type ChatActionType = "message_updated" | "subject_changed" | "message_sent" | "message_rejected" | "feedback_saved" | "feedback_deleted";
+export interface ChatAction { type: ChatActionType; label: string; message_id?: string; lead_id?: string; feedback_id?: string }
+export interface ChatContext { screen?: string; message_id?: string; lead_id?: string }
+export interface ChatTurn { role: "user" | "assistant"; text: string; actions: ChatAction[]; created_at: string }
+export interface ChatReply { session_id: string; reply: string; actions: ChatAction[] }
+export interface ChatSession { session_id: string; turns: ChatTurn[] }
 
 export interface Fact {
   id: string;
@@ -140,6 +187,8 @@ export interface SystemStatus {
   slack: { configured: boolean; signing_configured: boolean; channel: string | null; approvers: number; notify_kinds: string[]; web_url: string | null };
   safeguards: { require_consent: boolean; max_sends_per_day: number; sent_today: number; sender_name: string | null; sender_contact: string | null };
   knowledge_docs: number;
+  chat?: { enabled: boolean; slack_events: boolean };
+  memory?: { active_notes: number };
 }
 
 export interface HandoffSummary {
@@ -218,6 +267,7 @@ export interface DecisionInput {
   note?: string;
   reason_code?: string;
   review_seconds?: number;
+  subject_option?: SubjectOptionId;
 }
 
 export interface CallOutcomeInput {

@@ -10,6 +10,7 @@ import { ApprovalPanel } from "./ApprovalPanel";
 import { CallPanel } from "./CallPanel";
 import { DemoTools } from "./DemoTools";
 import { FactList, ScoreBreakdown } from "./Evidence";
+import { LeadNotes } from "./MemoryPanel";
 import { RunList } from "./RunTrace";
 import { AiMark, Badge, Card, ConfirmButton, ErrorBox, Loading, Score, StatusBadge } from "./ui";
 
@@ -102,10 +103,13 @@ export function LeadDetailView({ leadId }: { leadId: string }) {
       </nav>
 
       {tab === "overview" && (
-        <div className="two-col">
-          <Card title="조사한 사실 (출처 포함)"><FactList facts={d.facts} /></Card>
-          <Card title="선별 근거"><ScoreBreakdown score={d.score} /></Card>
-        </div>
+        <>
+          <div className="two-col">
+            <Card title="조사한 사실 (출처 포함)"><FactList facts={d.facts} /></Card>
+            <Card title="선별 근거"><ScoreBreakdown score={d.score} /></Card>
+          </div>
+          <LeadNotes leadId={l.id} company={l.company_name} />
+        </>
       )}
       {tab === "timeline" && (
         <ol className="timeline">

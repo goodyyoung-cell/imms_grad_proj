@@ -117,6 +117,33 @@ Cloud Run에 배포하기 전에 Slack 쪽만 따로 확인하는 방법이다. 
 | `sdr-call-due-notice` | 평일 9~17시 10분마다 | `/jobs/notify-due-calls` |
 | `sdr-approval-remind` | 평일 9~18시 매시 정각 | `/jobs/remind` |
 
+## 6.1 Slack 대화형 에이전트
+
+승인 버튼 말고도 Slack에서 에이전트에게 말로 시킬 수 있다. 같은 백엔드(`sdr_agent/chat.py`)를 관리 웹의 "AI 에이전트" 패널과 함께 쓴다.
+
+| 부르는 방법 | 동작 |
+|-------------|------|
+| 앱 DM (앱 > 메시지 탭) | 항상 응답. DM 하나가 대화 하나 |
+| 채널에서 `@SDR Agent ...` | 스레드로 답한다. 이어지는 스레드 말은 같은 대화 |
+| 승인 카드의 스레드에 답글 | 멘션 없이 써도 된다. 그 카드의 메일이 "이 메일"이 된다 |
+
+할 수 있는 일: 승인 대기·리드 조회, 제목·본문 다시 쓰기와 직접 수정, 제목 후보 선택, 승인(발송)과 반려, 피드백 메모리 저장·조회·삭제.
+승인 카드에는 제목 후보 드롭다운이 있어 버튼 없이 제목을 바꿀 수 있고, 챗으로 고치면 카드도 같은 내용으로 갱신된다.
+
+**안전 규칙 (코드로 막는다)**
+- 발송·반려·피드백 삭제는 사용자가 **그 메시지에서 직접 지시했을 때만** 실행된다 ("이 메일 발송해줘"). 지시가 분명하면 확인 단계 없이 바로 실행한다. 질문("보내도 될까?"), 부정("보내지 마"), "전에"가 든 말은 지시로 보지 않는다. 에이전트가 스스로 판단해 발송할 수 없다.
+- 발송은 버튼 승인과 같은 `jobs.decide_message()`를 탄다. AI 고지·수신 거부 안내·전송자 정보, 수신 거부 차단, 하루 발송 한도가 그대로 적용되고, 승인 기록의 채널은 `chat_slack`(웹은 `chat_web`)이다.
+- 이번 대화에서 조회했거나 카드가 알려 준 메일만 다룰 수 있다. 한 번에 발송·반려는 5건까지다.
+- `SLACK_APPROVERS`를 반드시 채운다. 비어 있으면 봇이 있는 곳의 모든 사용자가 발송을 지시할 수 있다.
+
+**기존 Slack 앱에 추가하는 방법**
+1. 앱 설정 > **OAuth & Permissions** > Bot Token Scopes에 `app_mentions:read`, `im:history`, `im:write`, `channels:history`, `users:read`를 추가한다.
+2. **Event Subscriptions**를 켜고 Request URL에 `https://<CLOUD_RUN_URL>/webhooks/slack/events`를 넣는다 (`Verified`가 떠야 한다). Subscribe to bot events에 `app_mention`, `message.im`, `message.channels`를 추가한다.
+3. **App Home**에서 Messages Tab을 켜고 "Allow users to send Slash commands and messages from the messages tab"를 켠다.
+4. **Install App > Reinstall to Workspace**로 권한을 다시 승인한다. 봇 토큰이 바뀌면 Cloud Run의 `SLACK_BOT_TOKEN`도 새 값으로 바꾼다.
+5. 비공개 채널에서 쓰려면 `groups:history`와 `message.groups` 이벤트도 추가한다.
+6. Cloud Run에는 **CPU 상시 할당**이 필요하다. 이벤트에 먼저 응답하고 뒤에서 처리하기 때문에, 요청이 끝난 뒤 CPU가 줄어들면 답이 멈춘다: `gcloud run services update sdr-agent --region asia-northeast3 --no-cpu-throttling`.
+
 ## 7. 수신 거부 안내와 링크
 
 시장·법 조사(`research-ai-sdr.md`)에서 나온 요구를 코드가 대신 지키게 했다.

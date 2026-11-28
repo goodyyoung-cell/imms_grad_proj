@@ -68,6 +68,15 @@ def finalize(subject: str, body: str, s: Settings, lead_id: str | None) -> tuple
     return subject, apply_footer(body, s, lead_id)
 
 
+def finalize_subject(subject: str, s: Settings) -> str:
+    return ensure_ad_subject(subject) if s.ad_prefix else (subject or "").strip()
+
+
+def finalize_options(options: list[dict], s: Settings) -> list[dict]:
+    """제목 후보 전체에 (광고) 표시 규칙을 똑같이 적용한다."""
+    return [{**o, "subject": finalize_subject(o["subject"], s)} for o in options]
+
+
 def _page(title: str, body: str) -> str:
     from . import webform
 

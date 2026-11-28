@@ -15,6 +15,7 @@ import re
 from typing import Any
 
 from ..agent import RunLog, Tool, ToolRegistry, run_agent
+from ..feedback import FEEDBACK_RULE, check_ids, goal_block
 from ..llm.base import LLM
 from ..toolkit.knowledge import GroundingError, KnowledgeContext
 
@@ -85,6 +86,7 @@ def run_reply_triage(
     *,
     last_message: dict | None = None,
     knowledge: KnowledgeContext | None = None,
+    feedback: list[dict] | None = None,
     trigger: str = "reply",
     max_steps: int = 5,
 ) -> dict[str, Any]:
@@ -96,10 +98,11 @@ def run_reply_triage(
                 "reason": "LLM 없음", "action": "needs_human", "answer": None, "by": "rule"}
 
     kctx = knowledge or KnowledgeContext()
+    feedback = feedback or []
 
     def submit_triage(classification: str, confidence: float, reason: str,
                       answer_subject: str | None = None, answer_body: str | None = None,
-                      kb_ids: list[str] | None = None) -> dict:
+                      kb_ids: list[str] | None = None, feedback_ids: list[str] | None = None) -> dict:
         if classification not in CLASSES:
             raise GroundingError(f"classification은 {CLASSES} 중 하나여야 합니다.")
         answer = None
@@ -107,8 +110,10 @@ def run_reply_triage(
             if not kb_ids:
                 raise GroundingError("답변 초안에는 search_kb로 찾은 근거(kb_ids)가 필요합니다. 근거가 없으면 answer_body를 비우세요.")
             ids = kctx.check(answer_body, kb_ids)
+            fb = check_ids(feedback_ids, feedback)
             answer = {"subject": (answer_subject or "문의하신 내용 답변드립니다").strip(),
-                      "body": answer_body.strip(), "citations": [{"type": "kb", "id": i} for i in ids]}
+                      "body": answer_body.strip(),
+                      "citations": [{"type": "kb", "id": i} for i in ids] + [{"type": "feedback", "id": i} for i in fb]}
         return {"classification": classification, "confidence": max(0.0, min(1.0, float(confidence))),
                 "reason": reason, "answer": answer}
 
@@ -122,15 +127,16 @@ def run_reply_triage(
                  "answer_subject": {"type": "string"},
                  "answer_body": {"type": "string"},
                  "kb_ids": {"type": "array", "items": {"type": "string"}},
+                 "feedback_ids": {"type": "array", "items": {"type": "string"}},
              }, "required": ["classification", "confidence", "reason"]},
              submit_triage, terminal=True),
     ])
     context = {"company_name": lead.get("company_name"), "title": lead.get("title"),
                "our_last_message": (last_message or {}).get("body", "")[:1500]}
     goal = (f"다음 답장을 분류하세요.\n맥락: {json.dumps(context, ensure_ascii=False)}\n"
-            f"답장 원문:\n\"\"\"\n{reply_body[:4000]}\n\"\"\"")
-    result = run_agent(llm, SYSTEM, goal, registry, log, workflow="reply_triage", trigger=trigger,
-                       lead_id=lead.get("id"), max_steps=max_steps)
+            f"답장 원문:\n\"\"\"\n{reply_body[:4000]}\n\"\"\"") + goal_block(feedback)
+    result = run_agent(llm, SYSTEM + (FEEDBACK_RULE if feedback else ""), goal, registry, log,
+                       workflow="reply_triage", trigger=trigger, lead_id=lead.get("id"), max_steps=max_steps)
     out = result.terminal_output
     if not out:
         return {"run_id": log.run_id, "classification": "unclear", "confidence": 0.0,

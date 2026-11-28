@@ -438,7 +438,8 @@ def test_draft_and_reply_answer_requests_carry_structured_data(monkeypatch):
     msg = repo.get_message(mid)
     data = jobs._approval_data(repo.get_lead("L1"), msg, {"score": 62, "tags": ["a"]}, customer_reply="가격이 궁금합니다")
     assert data["company"] == "한빛몰" and data["no_consent"] is True and data["customer_reply"] == "가격이 궁금합니다"
-    assert set(data) == {"company", "name", "title", "subject", "body", "kind", "score", "tags", "customer_reply", "no_consent"}
+    assert set(data) == {"company", "name", "title", "subject", "body", "kind", "score", "tags", "customer_reply", "no_consent",
+                         "subject_options", "subject_choice", "hook", "feedback_count"}
 
 
 def test_reject_reason_code_is_passed_through_and_validated():

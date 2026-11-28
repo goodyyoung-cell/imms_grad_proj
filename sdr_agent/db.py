@@ -90,10 +90,20 @@ class Repo:
     # --- 메시지·승인 ---
 
     def insert_message(self, lead_id: str, run_id: str | None, kind: str, draft: dict) -> dict:
-        return self.c.table("messages").insert({
-            "lead_id": lead_id, "run_id": run_id, "kind": kind,
-            "subject": draft["subject"], "body": draft["body"], "citations": draft.get("citations", []),
-        }).execute().data[0]
+        row = {"lead_id": lead_id, "run_id": run_id, "kind": kind,
+               "subject": draft["subject"], "body": draft["body"], "citations": draft.get("citations", [])}
+        # 제목 후보·소재는 첫 메일 초안에만 있다. 없으면 열을 보내지 않아 마이그레이션 전에도 저장된다
+        if draft.get("subject_options"):
+            row["subject_options"] = draft["subject_options"]
+            row["subject_choice"] = draft.get("subject_choice", "general")
+        if draft.get("hook"):
+            row["hook"] = draft["hook"]
+        return self.c.table("messages").insert(row).execute().data[0]
+
+    def find_message_by_slack_ts(self, channel: str, ts: str) -> dict | None:
+        rows = (self.c.table("messages").select("*").eq("slack_ref->>ts", ts).eq("slack_ref->>channel", channel)
+                .limit(1).execute().data)
+        return rows[0] if rows else None
 
     def get_message(self, message_id: str) -> dict:
         rows = self.c.table("messages").select("*").eq("id", message_id).limit(1).execute().data
@@ -276,3 +286,86 @@ class Repo:
                 "lead_id": lead_id, "run_id": run_id,
                 "score": score["score"], "tags": score["tags"], "breakdown": score["breakdown"],
             }).execute()
+
+    # --- 업종 브리프 ---
+
+    def latest_industry_brief(self, industry_key: str) -> dict | None:
+        rows = (self.c.table("industry_briefs").select("*").eq("industry_key", industry_key)
+                .order("collected_at", desc=True).limit(1).execute().data)
+        return rows[0] if rows else None
+
+    def insert_industry_brief(self, industry_key: str, items: list[dict]) -> dict:
+        return self.c.table("industry_briefs").insert({"industry_key": industry_key, "items": items}).execute().data[0]
+
+    # --- 피드백 메모리 ---
+
+    def list_feedback(self, scope: str | None = None, scope_key: str | None = None, status: str | None = "active",
+                      limit: int = 200) -> list[dict]:
+        q = self.c.table("feedback_notes").select("*")
+        if scope:
+            q = q.eq("scope", scope)
+        if scope_key:
+            q = q.eq("scope_key", scope_key)
+        if status and status != "all":
+            q = q.eq("status", status)
+        return q.order("created_at", desc=True).limit(limit).execute().data
+
+    def feedback_by_ids(self, ids: list[str]) -> dict[str, dict]:
+        ids = [i for i in set(ids) if i]
+        if not ids:
+            return {}
+        rows = self.c.table("feedback_notes").select("*").in_("id", ids).execute().data
+        return {r["id"]: r for r in rows}
+
+    def get_feedback(self, feedback_id: str) -> dict:
+        rows = self.c.table("feedback_notes").select("*").eq("id", feedback_id).limit(1).execute().data
+        if not rows:
+            raise LookupError(f"피드백 없음: {feedback_id}")
+        return rows[0]
+
+    def insert_feedback(self, row: dict) -> dict:
+        return self.c.table("feedback_notes").insert(row).execute().data[0]
+
+    def update_feedback(self, feedback_id: str, fields: dict) -> dict:
+        rows = self.c.table("feedback_notes").update({**fields, "updated_at": _now()}).eq("id", feedback_id).execute().data
+        if not rows:
+            raise LookupError(f"피드백 없음: {feedback_id}")
+        return rows[0]
+
+    def delete_feedback(self, feedback_id: str) -> None:
+        self.c.table("feedback_notes").delete().eq("id", feedback_id).execute()
+
+    def bump_feedback_applied(self, ids: list[str]) -> None:
+        for fid, row in self.feedback_by_ids(ids).items():
+            self.c.table("feedback_notes").update({"applied_count": (row.get("applied_count") or 0) + 1}).eq("id", fid).execute()
+
+    def count_feedback(self, status: str = "active") -> int:
+        res = self.c.table("feedback_notes").select("id", count="exact").eq("status", status).execute()
+        return res.count or 0
+
+    # --- 대화형 에이전트 ---
+
+    def get_chat_session(self, session_id: str) -> dict | None:
+        rows = self.c.table("chat_sessions").select("*").eq("id", session_id).limit(1).execute().data
+        return rows[0] if rows else None
+
+    def find_chat_session(self, external_key: str) -> dict | None:
+        rows = self.c.table("chat_sessions").select("*").eq("external_key", external_key).limit(1).execute().data
+        return rows[0] if rows else None
+
+    def insert_chat_session(self, row: dict) -> dict:
+        return self.c.table("chat_sessions").insert(row).execute().data[0]
+
+    def update_chat_session(self, session_id: str, fields: dict) -> None:
+        self.c.table("chat_sessions").update({**fields, "updated_at": _now()}).eq("id", session_id).execute()
+
+    def insert_chat_turn(self, row: dict) -> dict:
+        return self.c.table("chat_turns").insert(row).execute().data[0]
+
+    def list_chat_turns(self, session_id: str, limit: int = 200) -> list[dict]:
+        return (self.c.table("chat_turns").select("*").eq("session_id", session_id)
+                .order("created_at").limit(limit).execute().data)
+
+    def chat_event_seen(self, event_id: str) -> bool:
+        rows = self.c.table("chat_turns").select("id").eq("event_id", event_id).limit(1).execute().data
+        return bool(rows)

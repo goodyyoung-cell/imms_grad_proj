@@ -9,6 +9,7 @@ import { MetricsPanel } from "../../components/MetricsPanel";
 import { ApprovalHistoryPanel, RepliesPanel } from "../../components/HistoryPanels";
 import { KbPanel, StatusPanel } from "../../components/SettingsPanels";
 import { LeadDetailView } from "../../components/LeadDetailView";
+import { MemoryPanel } from "../../components/MemoryPanel";
 import { RunList } from "../../components/RunTrace";
 import { Badge, Card, Empty, ErrorBox, Loading, Score, StatusBadge } from "../../components/ui";
 import { useAuth } from "../../auth";
@@ -249,6 +250,10 @@ export function HistoryPage() {
 
 export function KbPage() {
   return <div className="page narrow"><header className="page-head"><h1>승인 자료</h1></header><KbPanel /></div>;
+}
+
+export function MemoryPage() {
+  return <div className="page"><header className="page-head"><h1>메모리</h1></header><MemoryPanel /></div>;
 }
 
 export function SettingsPage() {

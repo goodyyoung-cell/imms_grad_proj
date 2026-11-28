@@ -4,7 +4,7 @@ import { api } from "../api/client";
 import { useQuery } from "../api/hooks";
 import { downloadCsv, lineDiff } from "../lib/diff";
 import { kstDateTime, relative } from "../lib/format";
-import { REASON_CODES, REPLY_CLASS } from "../lib/labels";
+import { channelLabel, REASON_CODES, REPLY_CLASS } from "../lib/labels";
 import type { Approval, ReplyClass, ReplyRow } from "../types";
 import { Badge, Empty, ErrorBox, Loading, StatusBadge } from "./ui";
 
@@ -84,7 +84,7 @@ export function ApprovalHistoryPanel() {
                     <td>{kstDateTime(a.decided_at)}</td>
                     <td><strong>{a.lead?.company_name}</strong><div className="muted small">{a.message?.subject}</div></td>
                     <td><Badge tone={DECISION[a.decision].tone}>{DECISION[a.decision].label}</Badge></td>
-                    <td>{a.decided_by}<div className="muted small">{a.channel === "slack" ? "Slack" : "관리 화면"}</div></td>
+                    <td>{a.decided_by}<div className="muted small">{channelLabel(a.channel)}</div></td>
                     <td className="num">{a.review_seconds != null ? `${a.review_seconds}초` : "-"}</td>
                     <td>{[REASON_CODES.find((r) => r.value === a.reason_code)?.label, a.note].filter(Boolean).join(": ") || "-"}</td>
                   </tr>

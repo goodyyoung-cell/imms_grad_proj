@@ -10,7 +10,9 @@
 .shell-a .sidebar-foot { margin-top: auto; padding: 16px 8px 0; display: grid; gap: 6px; font-size: .85rem; }
 .shell-a .sidebar-foot .who { color: #fff; font-weight: 700; }
 .shell-a .sidebar-foot .link, .shell-a .sidebar-foot .switch { color: #98a2b3; text-align: left; }
-.shell-a .main { overflow: auto; min-width: 0; }
+.shell-a .main { min-width: 0; display: flex; flex-direction: column; overflow: hidden; }
+.a-topbar { flex: none; display: flex; justify-content: flex-end; align-items: center; gap: 12px; padding: 8px 16px; background: var(--panel); border-bottom: 1px solid var(--line); }
+.a-content { flex: 1; min-height: 0; overflow: auto; }
 
 .todo-cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-bottom: 8px; }
 .todo-card { display: grid; gap: 2px; padding: 18px 20px; background: var(--panel); border: 1px solid var(--line); border-radius: 14px; box-shadow: var(--shadow); color: var(--text); border-top: 4px solid var(--line); }

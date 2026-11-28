@@ -80,8 +80,24 @@ class SlackClient:
             raise SlackError(f"{method} 실패: {data.get('error')}")
         return data
 
-    def post_message(self, channel: str, blocks: list[dict], text: str) -> dict:
-        return self._call("chat.postMessage", {"channel": channel, "blocks": blocks, "text": text})
+    def post_message(self, channel: str, blocks: list[dict], text: str, thread_ts: str | None = None) -> dict:
+        payload: dict[str, Any] = {"channel": channel, "blocks": blocks, "text": text}
+        if thread_ts:
+            payload["thread_ts"] = thread_ts
+        return self._call("chat.postMessage", payload)
+
+    def user_name(self, user_id: str) -> str | None:
+        """Slack 사용자 표시 이름 (users:read 권한이 없으면 None). 승인 기록에 읽을 수 있는 이름을 남기려는 것."""
+        try:
+            r = self.http.get(f"{API}/users.info", params={"user": user_id}, timeout=10,
+                              headers={"Authorization": f"Bearer {self.token}"})
+            data = r.json()
+        except Exception:
+            return None
+        if not data.get("ok"):
+            return None
+        u = data.get("user") or {}
+        return (u.get("name") or (u.get("profile") or {}).get("display_name") or None)
 
     def update_message(self, channel: str, ts: str, blocks: list[dict], text: str) -> dict:
         """봇이 올린 메시지를 고친다. blocks를 함께 주지 않으면 기존 블록이 지워지므로 항상 같이 보낸다."""
@@ -138,6 +154,22 @@ def approval_blocks(data: dict, message_id: str, base_url: str | None) -> list[d
     if data.get("customer_reply"):
         blocks.append({"type": "section", "text": _plain("고객 답장\n" + data["customer_reply"], 1200)})
     blocks.append({"type": "section", "text": _plain(f"제목: {data.get('subject', '')}\n\n{data.get('body', '')}")})
+    options = data.get("subject_options") or []
+    if len(options) > 1:
+        current = data.get("subject_choice") or "general"
+        opts = [{"text": _plain(f"{o['label']}: {o['subject']}", 75), "value": f"{message_id}|{o['id']}"} for o in options]
+        select: dict[str, Any] = {"type": "static_select", "action_id": "select_subject",
+                                  "placeholder": _plain("제목 바꾸기", 75), "options": opts}
+        picked = next((o for o in opts if o["value"].endswith(f"|{current}")), None)
+        if picked:
+            select["initial_option"] = picked
+        blocks.append({"type": "section", "text": _mrkdwn("*제목 후보* (기본은 일반 제목)"), "accessory": select})
+    if data.get("hook"):
+        label = {"company": "회사 소식", "industry": "업종 이슈", "inquiry": "문의 사유"}.get(data["hook"].get("type"), "소재")
+        extra = f"  |  반영한 피드백 {data['feedback_count']}건" if data.get("feedback_count") else ""
+        blocks.append({"type": "context", "elements": [_mrkdwn(f"*소재* {label}: {_trunc(data['hook'].get('summary'), 200)}{extra}")]})
+    elif data.get("feedback_count"):
+        blocks.append({"type": "context", "elements": [_mrkdwn(f"반영한 피드백 {data['feedback_count']}건")]})
     if data.get("no_consent"):
         blocks.append({"type": "context", "elements": [_mrkdwn("이 리드는 수신 동의 기록이 없습니다. 실제 발송 단계에서는 보내지 않습니다")]})
     blocks.append({"type": "context", "elements": [_mrkdwn("고객에게 나가기 전에 사람이 확인합니다. 승인하면 발송합니다")]})
@@ -275,6 +307,22 @@ def _apply(mid: str, decision: str, by: str, *, repo: Any, settings: Settings, c
         _ephemeral(client, meta.get("response_url"), "서버 오류로 처리하지 못했습니다. 관리 화면에서 확인해 주세요.")
 
 
+def _select_subject(mid: str, option_id: str, by: str, *, repo: Any, settings: Settings, client: SlackClient | None,
+                    meta: dict) -> None:
+    """제목 후보 드롭다운. 바꾼 뒤 클릭한 카드를 새 제목으로 다시 그린다."""
+    from . import jobs
+
+    try:
+        jobs.choose_subject(mid, option_id, by, repo=repo, settings=settings, refresh=False)
+        blocks, fallback = jobs.approval_card(mid, repo=repo, settings=settings)
+        _replace_original(client, meta, blocks, fallback)
+    except (ValueError, LookupError) as exc:
+        _ephemeral(client, meta.get("response_url"), f"제목을 바꾸지 못했습니다: {exc}")
+    except Exception:
+        logger.exception("Slack 제목 선택 실패: %s", mid)
+        _ephemeral(client, meta.get("response_url"), "서버 오류로 제목을 바꾸지 못했습니다. 관리 화면에서 확인해 주세요.")
+
+
 def _open_modal(kind: str, mid: str, payload: dict, *, settings: Settings, repo: Any, client: SlackClient | None) -> None:
     url = payload.get("response_url")
     try:
@@ -312,6 +360,11 @@ def handle_interaction(payload: dict, *, settings: Settings, repo: Any, client: 
     if kind == "block_actions":
         action = (payload.get("actions") or [{}])[0]
         mid, action_id = action.get("value"), action.get("action_id")
+        if action_id == "select_subject":
+            mid, _, option_id = ((action.get("selected_option") or {}).get("value") or "").partition("|")
+            meta = json.loads(_meta(mid, payload))
+            _select_subject(mid, option_id, by, repo=repo, settings=settings, client=client, meta=meta)
+            return {}
         meta = json.loads(_meta(mid or "", payload))
         if action_id == "approve" and mid:
             _apply(mid, "approved", by, repo=repo, settings=settings, client=client, meta=meta, decide=decide)

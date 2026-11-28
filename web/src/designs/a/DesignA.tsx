@@ -3,7 +3,8 @@ import { Link, NavLink, Route, Routes, Navigate } from "react-router-dom";
 import { api } from "../../api/client";
 import { useQuery } from "../../api/hooks";
 import { useAuth } from "../../auth";
-import { ActivityPage, ApprovalsPage, Briefing, CallsPage, ExceptionsPage, HistoryPage, ImportPage, KbPage, LeadsPage, MetricsPage, RepliesPage, SettingsPage } from "./pages";
+import { ActivityPage, ApprovalsPage, Briefing, CallsPage, ExceptionsPage, HistoryPage, ImportPage, KbPage, LeadsPage, MemoryPage, MetricsPage, RepliesPage, SettingsPage } from "./pages";
+import { ChatButton } from "../../components/Chat";
 import { QuickSearch } from "../../components/QuickSearch";
 
 /** 디자인 A: 업무함. 오늘 사람이 할 일을 종류별 목록에서 하나씩 처리한다. */
@@ -35,6 +36,7 @@ export function DesignA() {
         {link("/a/activity", "에이전트 기록")}
         {link("/a/history", "승인 이력")}
         {link("/a/kb", "승인 자료")}
+        {link("/a/memory", "메모리")}
         {link("/a/metrics", "평가 지표")}
         {link("/a/import", "리드 올리기")}
         {link("/a/settings", "설정·상태")}
@@ -47,21 +49,25 @@ export function DesignA() {
         </div>
       </nav>
       <main className="main">
-        <Routes>
-          <Route index element={<Briefing />} />
-          <Route path="approvals/:id?" element={<ApprovalsPage />} />
-          <Route path="calls/:id?" element={<CallsPage />} />
-          <Route path="exceptions/:id?" element={<ExceptionsPage />} />
-          <Route path="leads/:id?" element={<LeadsPage />} />
-          <Route path="activity" element={<ActivityPage />} />
-          <Route path="metrics" element={<MetricsPage />} />
-          <Route path="replies/:id?" element={<RepliesPage />} />
-          <Route path="history" element={<HistoryPage />} />
-          <Route path="kb" element={<KbPage />} />
-          <Route path="settings" element={<SettingsPage />} />
-          <Route path="import" element={<ImportPage />} />
-          <Route path="*" element={<Navigate to="/a" replace />} />
-        </Routes>
+        <div className="a-topbar"><ChatButton /></div>
+        <div className="a-content">
+          <Routes>
+            <Route index element={<Briefing />} />
+            <Route path="approvals/:id?" element={<ApprovalsPage />} />
+            <Route path="calls/:id?" element={<CallsPage />} />
+            <Route path="exceptions/:id?" element={<ExceptionsPage />} />
+            <Route path="leads/:id?" element={<LeadsPage />} />
+            <Route path="activity" element={<ActivityPage />} />
+            <Route path="metrics" element={<MetricsPage />} />
+            <Route path="replies/:id?" element={<RepliesPage />} />
+            <Route path="history" element={<HistoryPage />} />
+            <Route path="kb" element={<KbPage />} />
+            <Route path="memory" element={<MemoryPage />} />
+            <Route path="settings" element={<SettingsPage />} />
+            <Route path="import" element={<ImportPage />} />
+            <Route path="*" element={<Navigate to="/a" replace />} />
+          </Routes>
+        </div>
       </main>
       <QuickSearch toLead={(id) => `/a/leads/${id}`} />
     </div>

@@ -1,12 +1,14 @@
 // 백엔드 없이 화면을 시험하고 시연하기 위한 모의 서버. `?mock=1`로 켠다.
 // 데이터는 실제 배포 서버의 응답 일부(회사는 상장사, 담당자·이메일은 가상)에 가상 상태 몇 건을 더한 것이다.
 import type {
-  Approval, KbDoc, ReplyRow, SystemStatus,
+  Approval, ChatAction, ChatContext, ChatReply, ChatSession, ChatTurn, FeedbackInput, FeedbackNote, FeedbackPatch, FeedbackScope, KbDoc, ReplyRow, SystemStatus,
   CallOutcomeInput, CallTask, DecisionInput, Handoff, LeadDetail, LeadStatus, Message, Reply, ReplyClass,
   Run, RunDetail, Summary,
 } from "../types";
 import fixtures from "./fixtures.json";
 import { ApiError } from "./errors";
+import { INDUSTRIES, SEED_NOTES, decorateMessages } from "./chatFixtures";
+import { detectIntent, inferKind, inferScope, ruleFromText, shortenSubject } from "./mockChat";
 
 type Fixtures = {
   total: number;
@@ -16,13 +18,25 @@ type Fixtures = {
   runDetails: Record<string, RunDetail>;
 };
 
-let db: Fixtures = structuredClone(fixtures) as unknown as Fixtures;
+function freshDb(): Fixtures {
+  const d = structuredClone(fixtures) as unknown as Fixtures;
+  decorateMessages(d.details);
+  return d;
+}
+
+let db: Fixtures = freshDb();
 let seq = 1000;
 const uid = (p: string) => `${p}-${++seq}`;
 const nowIso = () => new Date().toISOString();
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 let approvals: Approval[] = [];
+let notes: FeedbackNote[] = structuredClone(SEED_NOTES);
+let chatSessions = new Map<string, ChatTurn[]>();
+
+/** 챗 답변이 오기까지의 지연(ms). 처리 지연 180ms를 더해 0.6~1.2초로 보이게 한다. 시험에서는 0으로 바꾼다 */
+let chatDelay: () => number = () => 420 + Math.random() * 600;
+export function setMockChatDelay(fn: () => number) { chatDelay = fn; }
 
 function seedApprovals() {
   const sent = Object.values(db.details).flatMap((d) => d.messages).filter((m) => m.status === "sent");
@@ -34,7 +48,10 @@ function seedApprovals() {
   }));
 }
 
-export function resetMock() { db = structuredClone(fixtures) as unknown as Fixtures; seq = 1000; seedApprovals(); }
+export function resetMock() {
+  db = freshDb(); seq = 1000; seedApprovals();
+  notes = structuredClone(SEED_NOTES); chatSessions = new Map();
+}
 
 function kbFromRuns(): KbDoc[] {
   const docs = new Map<string, KbDoc>();
@@ -130,6 +147,144 @@ function classify(text: string): { c: ReplyClass; conf: number } {
   return { c: "unclear", conf: 0.4 };
 }
 
+const industryLabel = (key: string | null) => INDUSTRIES.find((i) => i.key === key)?.label ?? key ?? "";
+
+function scopeLabel(scope: FeedbackScope, key: string | null | undefined): string {
+  if (scope === "global") return "전체";
+  if (scope === "industry") return industryLabel(key ?? null);
+  return brief(key ?? "")?.company_name ?? "";
+}
+
+/** 범위와 적용 대상이 맞는지 본다. 틀리면 실제 서버처럼 400 */
+function checkScope(scope: FeedbackScope, key: string | null | undefined) {
+  if (!["lead", "industry", "global"].includes(scope)) throw new ApiError(400, "범위가 올바르지 않습니다");
+  if (scope === "global") return;
+  if (!key) throw new ApiError(400, scope === "lead" ? "적용할 고객을 골라 주세요" : "적용할 업종을 골라 주세요");
+  if (scope === "lead" && !brief(key)) throw new ApiError(400, "고객을 찾을 수 없습니다");
+  if (scope === "industry" && !INDUSTRIES.some((i) => i.key === key)) throw new ApiError(400, "알 수 없는 업종입니다");
+}
+
+function addNote(i: FeedbackInput, source: FeedbackNote["source"], by: string): FeedbackNote {
+  const text = String(i.text ?? "").trim();
+  if (!text) throw new ApiError(400, "내용을 입력해 주세요");
+  checkScope(i.scope, i.scope_key);
+  const n: FeedbackNote = {
+    id: uid("fb"), scope: i.scope, scope_key: i.scope === "global" ? null : (i.scope_key ?? null), scope_label: scopeLabel(i.scope, i.scope_key),
+    kind: i.kind ?? "other", text, source, created_by: by, status: "active", applied_count: 0, created_at: nowIso(),
+  };
+  notes.unshift(n);
+  return n;
+}
+
+function patchNote(n: FeedbackNote, p: FeedbackPatch) {
+  if (p.text !== undefined) {
+    if (!String(p.text).trim()) throw new ApiError(400, "내용을 입력해 주세요");
+    n.text = String(p.text).trim();
+  }
+  const scope = p.scope ?? n.scope;
+  const key = scope === "global" ? null : p.scope !== undefined || p.scope_key !== undefined ? (p.scope_key ?? null) : n.scope_key;
+  if (p.scope !== undefined || p.scope_key !== undefined) { checkScope(scope, key); n.scope = scope; n.scope_key = key; n.scope_label = scopeLabel(scope, key); }
+  if (p.kind) n.kind = p.kind;
+  if (p.status) {
+    if (!["active", "archived"].includes(p.status)) throw new ApiError(400, "상태가 올바르지 않습니다");
+    n.status = p.status;
+  }
+}
+
+function applySubjectOption(msg: Message, id: string) {
+  const opt = msg.subject_options?.find((o) => o.id === id);
+  if (!opt) throw new ApiError(400, "그 제목 후보는 없습니다");
+  msg.subject = opt.subject;
+  msg.subject_choice = opt.id;
+}
+
+/** 승인·수정 승인·반려. 관리 화면과 챗(AI 에이전트)이 같은 길을 쓰고, 채널만 다르게 기록한다 */
+function decideMessage(msg: Message, d: DecisionInput, channel: string, by = "시연") {
+  if (msg.status !== "pending_approval") throw new ApiError(400, "이미 처리된 메일입니다");
+  if (d.subject_option && d.decision !== "rejected") applySubjectOption(msg, d.subject_option);
+  const original = msg.body;
+  const record = (decision: Approval["decision"]) => approvals.unshift({
+    id: uid("appr"), message_id: msg.id, decision, decided_by: by, decided_at: nowIso(), note: d.note ?? null, reason_code: d.reason_code ?? null,
+    original_body: decision === "edited" ? original : null, review_seconds: d.review_seconds ?? null, channel,
+    message: { id: msg.id, lead_id: msg.lead_id, kind: msg.kind, subject: msg.subject, body: d.edited_body ?? msg.body, status: msg.status }, lead: brief(msg.lead_id),
+  });
+  if (d.decision === "rejected") {
+    record("rejected");
+    msg.status = "rejected"; setStatus(msg.lead_id, "needs_human");
+    return { message_id: msg.id, status: "rejected" };
+  }
+  if (d.decision === "edited") {
+    if (!d.edited_body?.trim()) throw new ApiError(400, "수정한 본문이 필요합니다");
+    msg.body = d.edited_body;
+  }
+  msg.status = "sent"; msg.sent_at = nowIso(); msg.provider_message_id = uid("sandbox"); record(d.decision);
+  setStatus(msg.lead_id, "contacted");
+  const detail = detailOf(msg.lead_id);
+  const call = msg.kind === "initial" ? makeCall(msg) : null;
+  if (call) detail.calls.push(call);
+  return { message_id: msg.id, status: "sent", call_task_id: call?.id ?? null };
+}
+
+const leadLine = (id: string) => { const l = brief(id); return l ? `${l.company_name} ${l.name ?? ""} ${l.title ?? ""}`.replace(/\s+/g, " ").trim() : "고객"; };
+
+/** 모의 AI 에이전트. 키워드로 의도를 가려 정해진 일을 하고, 실제로 모의 데이터를 바꾼다 */
+function chatAnswer(text: string, ctx: ChatContext): { reply: string; actions: ChatAction[] } {
+  const intent = detectIntent(text);
+  const actions: ChatAction[] = [];
+  const pending = allMessages().filter((m) => m.status === "pending_approval").sort((a, b) => b.created_at.localeCompare(a.created_at));
+  const target = ctx.message_id ? allMessages().find((m) => m.id === ctx.message_id)
+    : ctx.lead_id ? db.details[ctx.lead_id]?.messages.find((m) => m.status === "pending_approval") : undefined;
+  const needTarget = "어느 메일인지 알 수 없습니다. 승인 대기 메일을 열어 둔 채로 다시 말씀해 주세요.";
+
+  if (intent === "pending") {
+    if (pending.length === 0) return { reply: "승인을 기다리는 메일이 없습니다.", actions };
+    const lines = pending.map((m, i) => `${i + 1}. ${leadLine(m.lead_id)}: ${m.subject}`);
+    return { reply: `승인을 기다리는 메일이 ${pending.length}건 있습니다.\n${lines.join("\n")}\n하나를 열어 두고 "이 메일 제목을 더 짧게 다시 써줘"처럼 말씀해 주세요.`, actions };
+  }
+
+  if (intent === "rewrite") {
+    if (!target) return { reply: needTarget, actions };
+    if (target.status !== "pending_approval") return { reply: "이미 처리된 메일이라 고칠 수 없습니다.", actions };
+    const before = target.subject;
+    const after = shortenSubject(before);
+    (target.revisions ??= []).push({ at: nowIso(), by: "시연", instruction: text, subject: before, body: target.body });
+    target.subject = after;
+    target.subject_choice = "custom";
+    actions.push({ type: "message_updated", label: "제목을 다시 썼습니다", message_id: target.id, lead_id: target.lead_id });
+    return { reply: `${leadLine(target.lead_id)}님께 보낼 메일 제목을 다시 썼습니다.\n이전: ${before}\n변경: ${after}\n본문은 그대로 두었고, 이전 버전은 메일 화면의 "이전 버전"에서 볼 수 있습니다.`, actions };
+  }
+
+  if (intent === "remember") {
+    const leadId = target?.lead_id ?? ctx.lead_id;
+    if (/이 (고객|회사)/.test(text) && !leadId) return { reply: "어느 고객인지 알 수 없습니다. 고객이나 메일 화면을 열어 둔 채로 다시 말씀해 주세요.", actions };
+    const scope = inferScope(text, !!leadId);
+    const n = addNote({ text: ruleFromText(text), scope, scope_key: scope === "lead" ? leadId : null, kind: inferKind(text) }, "chat_web", "시연");
+    actions.push({ type: "feedback_saved", label: `메모리에 저장됨: ${n.text}`, feedback_id: n.id, lead_id: scope === "lead" ? leadId : undefined });
+    return { reply: `메모리에 저장했습니다.\n범위: ${n.scope_label}\n내용: ${n.text}\n다음 메일, 답장, 통화 스크립트를 만들 때 자동으로 반영합니다. 고객 > 업종 > 전체 순으로 좁은 범위가 우선합니다.`, actions };
+  }
+
+  if (intent === "forget") {
+    const last = notes.find((n) => n.status === "active" && n.source === "chat_web" && n.created_by === "시연");
+    if (!last) return { reply: "방금 챗으로 저장한 메모가 없습니다. 이전 메모는 메모리 화면에서 직접 지울 수 있습니다.", actions };
+    notes = notes.filter((n) => n.id !== last.id);
+    actions.push({ type: "feedback_deleted", label: "메모리에서 지웠습니다", feedback_id: last.id });
+    return { reply: `가장 최근에 저장한 메모를 지웠습니다.\n내용: ${last.text}`, actions };
+  }
+
+  if (intent === "send") {
+    if (!target) return { reply: needTarget, actions };
+    if (target.status !== "pending_approval") return { reply: "이미 처리된 메일입니다.", actions };
+    decideMessage(target, { decision: "approved" }, "chat_web");
+    actions.push({ type: "message_sent", label: "승인하고 발송함", message_id: target.id, lead_id: target.lead_id });
+    return { reply: `승인하고 발송했습니다 (샌드박스). ${leadLine(target.lead_id)}님께 나갔고, 1시간 뒤 전화 과제가 생깁니다.`, actions };
+  }
+
+  return {
+    reply: "다음 일을 도와 드립니다.\n- 승인 대기 메일 보기: \"대기 중인 승인 요청 보여줘\"\n- 지금 보는 메일 제목 다시 쓰기: \"이 메일 제목을 더 짧게 다시 써줘\"\n- 피드백을 메모리에 저장: \"앞으로 가격 이야기를 빼줘 (기억해)\"\n- 지금 보는 메일 승인·발송: \"이 메일 발송해\"\n시연 데이터의 에이전트는 키워드로만 알아듣습니다.",
+    actions,
+  };
+}
+
 export async function mockRequest<T>(method: string, path: string, body?: unknown): Promise<T> {
   await wait(180);
   const url = new URL(path, "http://mock");
@@ -194,31 +349,57 @@ export async function mockRequest<T>(method: string, path: string, body?: unknow
 
   const decision = p.match(/^\/admin\/messages\/([^/]+)\/decision$/);
   if (method === "POST" && decision) {
-    const d = b as unknown as DecisionInput;
     const msg = allMessages().find((m) => m.id === decision[1]);
     if (!msg) throw new ApiError(404, "메일을 찾을 수 없습니다");
-    if (msg.status !== "pending_approval") throw new ApiError(400, "이미 처리된 메일입니다");
-    const original = msg.body;
-    const record = (decision: Approval["decision"]) => approvals.unshift({
-      id: uid("appr"), message_id: msg.id, decision, decided_by: "시연", decided_at: nowIso(), note: d.note ?? null, reason_code: d.reason_code ?? null,
-      original_body: decision === "edited" ? original : null, review_seconds: d.review_seconds ?? null, channel: "admin",
-      message: { id: msg.id, lead_id: msg.lead_id, kind: msg.kind, subject: msg.subject, body: d.edited_body ?? msg.body, status: msg.status }, lead: brief(msg.lead_id),
-    });
-    if (d.decision === "rejected") {
-      record("rejected");
-      msg.status = "rejected"; setStatus(msg.lead_id, "needs_human");
-      return out({ message_id: msg.id, status: "rejected" });
-    }
-    if (d.decision === "edited") {
-      if (!d.edited_body?.trim()) throw new ApiError(400, "수정한 본문이 필요합니다");
-      msg.body = d.edited_body;
-    }
-    msg.status = "sent"; msg.sent_at = nowIso(); msg.provider_message_id = uid("sandbox"); record(d.decision);
-    setStatus(msg.lead_id, "contacted");
-    const detail = detailOf(msg.lead_id);
-    const call = msg.kind === "initial" ? makeCall(msg) : null;
-    if (call) detail.calls.push(call);
-    return out({ message_id: msg.id, status: "sent", call_task_id: call?.id ?? null });
+    return out(decideMessage(msg, b as unknown as DecisionInput, "admin"));
+  }
+
+  const subject = p.match(/^\/admin\/messages\/([^/]+)\/subject$/);
+  if (method === "POST" && subject) {
+    const msg = allMessages().find((m) => m.id === subject[1]);
+    if (!msg) throw new ApiError(404, "메일을 찾을 수 없습니다");
+    if (msg.status !== "pending_approval") throw new ApiError(400, "승인 대기 중인 메일만 제목을 바꿀 수 있습니다");
+    applySubjectOption(msg, String(b.option_id ?? ""));
+    return out({ ...msg, lead: brief(msg.lead_id) });
+  }
+
+  if (method === "GET" && p === "/admin/feedback") {
+    const status = q.get("status") ?? "active", scope = q.get("scope"), lid = q.get("lead_id");
+    const rows = notes
+      .filter((n) => (status === "all" || n.status === status) && (!scope || n.scope === scope) && (!lid || (n.scope === "lead" && n.scope_key === lid)))
+      .sort((a, b2) => b2.created_at.localeCompare(a.created_at))
+      .slice(0, Number(q.get("limit") ?? 200));
+    return out({ notes: rows });
+  }
+  if (method === "POST" && p === "/admin/feedback") return out(addNote(b as unknown as FeedbackInput, "manual", "시연"));
+  const fb = p.match(/^\/admin\/feedback\/([^/]+)$/);
+  if (fb && (method === "PATCH" || method === "DELETE")) {
+    const n = notes.find((x) => x.id === fb[1]);
+    if (!n) throw new ApiError(404, "메모를 찾을 수 없습니다");
+    if (method === "DELETE") { notes = notes.filter((x) => x.id !== n.id); return out({ ok: true }); }
+    patchNote(n, b as unknown as FeedbackPatch);
+    return out(n);
+  }
+  if (method === "GET" && p === "/admin/industries") return out({ industries: INDUSTRIES });
+
+  if (method === "POST" && p === "/admin/chat") {
+    const text = String(b.message ?? "").trim();
+    if (!text) throw new ApiError(400, "메시지를 입력해 주세요");
+    await wait(chatDelay());
+    const known = b.session_id ? String(b.session_id) : null;
+    const sid = known && chatSessions.has(known) ? known : uid("chat");
+    const { reply, actions } = chatAnswer(text, (b.context ?? {}) as ChatContext);
+    const turns = chatSessions.get(sid) ?? [];
+    turns.push({ role: "user", text, actions: [], created_at: nowIso() }, { role: "assistant", text: reply, actions, created_at: nowIso() });
+    chatSessions.set(sid, turns);
+    return out({ session_id: sid, reply, actions } satisfies ChatReply);
+  }
+  const chatSession = p.match(/^\/admin\/chat\/sessions\/([^/]+)$/);
+  if (method === "GET" && chatSession) {
+    const sid = decodeURIComponent(chatSession[1]);
+    const turns = chatSessions.get(sid);
+    if (!turns) throw new ApiError(404, "대화를 찾을 수 없습니다");
+    return out({ session_id: sid, turns } satisfies ChatSession);
   }
 
   const outcome = p.match(/^\/admin\/calls\/([^/]+)\/outcome$/);
@@ -263,6 +444,8 @@ export async function mockRequest<T>(method: string, path: string, body?: unknow
       slack: { configured: false, signing_configured: false, channel: null, approvers: 0, notify_kinds: ["approval", "needs_human", "unsubscribe", "handoff", "followup", "call_due", "reminder"], web_url: null },
       safeguards: { require_consent: false, max_sends_per_day: 50, sent_today: allMessages().filter((m) => m.status === "sent").length, sender_name: "노바웍스", sender_contact: "sales@novaworks.example" },
       knowledge_docs: kbFromRuns().length,
+      chat: { enabled: true, slack_events: false },
+      memory: { active_notes: notes.filter((n) => n.status === "active").length },
     };
     return out(s);
   }
