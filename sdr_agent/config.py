@@ -40,6 +40,7 @@ class Settings:
     openai_model: str | None = None     # 쓸 모델 이름 (필수)
     openai_base_url: str | None = None  # 비우면 https://api.openai.com/v1. Azure OpenAI 등 호환 서비스의 /v1 주소
     openai_reasoning_effort: str | None = None  # low | medium | high (추론 모델에서 추론량을 줄여 응답을 빠르게)
+    gemini_thinking_level: str | None = None    # low | medium | high. 비우면 Gemini 기본 추론 (느려서 low 권장)
     handoff_to: str | None = None       # 인계 자료를 받을 담당자 (이름 또는 주소)
     naver_client_id: str | None = None  # 네이버 검색 API (뉴스)
     naver_client_secret: str | None = None
@@ -92,6 +93,7 @@ def load_settings() -> Settings:
         openai_model=_get("OPENAI_MODEL"),
         openai_base_url=(_get("OPENAI_BASE_URL") or "").rstrip("/") or None,
         openai_reasoning_effort=_get("OPENAI_REASONING_EFFORT"),
+        gemini_thinking_level=_get("GEMINI_THINKING_LEVEL"),
         handoff_to=_get("HANDOFF_TO"),
         slack_bot_token=_get("SLACK_BOT_TOKEN"),
         slack_signing_secret=_get("SLACK_SIGNING_SECRET"),

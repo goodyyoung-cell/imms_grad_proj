@@ -27,9 +27,11 @@ def _as_dict(content: Any) -> dict[str, Any]:
 class GeminiLLM:
     provider = "gemini"
 
-    def __init__(self, api_key: str, model: str):
-        self.client = genai.Client(api_key=api_key)
+    def __init__(self, api_key: str, model: str, thinking_level: str | None = None, timeout: float = 90.0):
+        """thinking_level(low, medium, high)을 주면 추론량을 줄인다. 기본 추론은 응답이 수십 초 걸리거나 시간 초과가 날 수 있다."""
+        self.client = genai.Client(api_key=api_key, http_options=types.HttpOptions(timeout=int(timeout * 1000)))
         self.model = model
+        self.thinking_level = thinking_level
 
     @staticmethod
     def to_provider_contents(messages: list[Message]) -> list[types.Content]:
@@ -65,6 +67,7 @@ class GeminiLLM:
             ])] if tools else None,
             # 도구 실행은 우리 루프가 직접 하고 로그를 남긴다
             automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
+            thinking_config=types.ThinkingConfig(thinking_level=self.thinking_level) if self.thinking_level else None,
         )
         resp = self.client.models.generate_content(
             model=self.model, contents=self.to_provider_contents(messages), config=config

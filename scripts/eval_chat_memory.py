@@ -29,6 +29,7 @@ LLM_NAME = os.environ.get("EVAL_LLM", "claude")
 if LLM_NAME == "gemini":
     os.environ["GEMINI_API_KEY"] = secret("gemini-api-key")
     os.environ["GEMINI_MODEL"] = os.environ.get("GEMINI_MODEL", "gemini-3.8-flash")
+    os.environ["GEMINI_THINKING_LEVEL"] = os.environ.get("GEMINI_THINKING_LEVEL", "low")
 elif LLM_NAME == "openai":
     assert os.environ.get("OPENAI_API_KEY") and os.environ.get("OPENAI_MODEL"), "OPENAI_API_KEY와 OPENAI_MODEL을 환경변수로 주세요"
 else:
@@ -128,6 +129,23 @@ talk("이 메일 발송해줘")
 report["status_before_send_order"] = status_before
 report["status_after_send_order"] = repo.messages[mid]["status"]
 report["approvals"] = repo.approvals
+
+# 피드백이 다음 초안에 반영되는지: 전체 범위 규칙을 저장하고, 다른 리드의 첫 메일 초안을 다시 만든다
+rule = repo.insert_feedback({"scope": "global", "scope_key": None, "kind": "length", "text": "제목은 20자 안으로 쓴다",
+                             "created_by": "평가", "source": "chat_web"})
+second = next(d for d in report["drafts"] if d["lead"] == "씨젠" and d["status"] == "drafted")
+old = repo.messages[second["message_id"]]
+old["status"] = "rejected"
+repo.leads[old["lead_id"]]["status"] = "researched"
+logs.clear()
+again = jobs.draft_emails([old["lead_id"]], settings=settings, repo=repo, new_log=new_log, news_clients=news)[0]
+loop = {"before": second["options"], "rule_id": rule["id"], "status": again["status"]}
+if again["status"] == "drafted":
+    v = view(again["message_id"])
+    loop.update(after=v["options"], applied=[c for c in v["citations"] if c.get("type") == "feedback"],
+                lengths={o["id"]: len(o["subject"]) for o in v["options"]}, applied_count=repo.notes[rule["id"]]["applied_count"])
+report["memory_loop"] = loop
+print("\nMEMORY LOOP", json.dumps(loop, ensure_ascii=False, default=str)[:1500])
 
 OUT.write_text(json.dumps(report, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
 print("saved", OUT)

@@ -22,7 +22,7 @@ def get_llm(provider: str | None = None, settings: Settings | None = None) -> LL
             raise RuntimeError("GEMINI_API_KEY와 GEMINI_MODEL이 필요합니다")
         from .gemini_llm import GeminiLLM
 
-        return GeminiLLM(s.gemini_api_key, s.gemini_model)
+        return GeminiLLM(s.gemini_api_key, s.gemini_model, s.gemini_thinking_level)
     if provider == "openai":
         if not s.openai_api_key or not s.openai_model:
             raise RuntimeError("OPENAI_API_KEY와 OPENAI_MODEL이 필요합니다")
