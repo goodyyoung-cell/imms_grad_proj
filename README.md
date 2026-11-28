@@ -32,8 +32,13 @@ SaaS·AI 솔루션 시장이 대기업에서 중소기업으로 넓어지고 있
 
 ## 시작하기
 
-Python 기반으로 개발합니다. 코드 뼈대를 만들 때 설치·실행 방법을 추가합니다.
-
 ```bash
+python -m venv .venv && source .venv/bin/activate
+pip install -e ".[dev]"
 cp .env.example .env   # 값을 채워 넣기. .env는 커밋되지 않습니다
+pytest                 # API 키 없이 도는 테스트
+
+python -m sdr_agent.cli research --limit 3   # 리서치 에이전트 실행
 ```
+
+Supabase와 Cloud Run 설정은 [배포 가이드](docs/deploy.md)를 참고합니다.
