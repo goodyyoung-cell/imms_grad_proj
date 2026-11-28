@@ -49,6 +49,51 @@ describe("승인 패널", () => {
   });
 });
 
+describe("피드백에서 배우기", () => {
+  it("대화형 피드백으로 초안을 다시 쓰고 작성 지침으로 저장한다", async () => {
+    const [m] = (await mockRequest<{ messages: Message[] }>("GET", "/admin/messages")).messages;
+    wrap(<ApprovalPanel message={m} />);
+    const box = await screen.findByLabelText("초안에 대한 피드백");
+    const btn = screen.getByRole("button", { name: "다시 쓰기" });
+    expect((btn as HTMLButtonElement).disabled).toBe(true);
+    await userEvent.type(box, "더 짧게 써 줘");
+    await userEvent.click(btn);
+    await screen.findByText("더 짧게 써 줘");
+    expect(await screen.findByText(/작성 지침 1개를 배워/)).toBeTruthy();
+    const { lessons } = await mockRequest<{ lessons: { text: string; source: string }[] }>("GET", "/admin/lessons?status=active");
+    expect(lessons[0]).toMatchObject({ text: "더 짧게 써 줘", source: "chat" });
+    const after = (await mockRequest<{ messages: Message[] }>("GET", "/admin/messages")).messages.find((x) => x.id === m.id)!;
+    expect(after.status).toBe("pending_approval"); // 다시 써도 발송하지 않는다
+  });
+
+  it("저장하지 않기를 고르면 지침을 남기지 않는다", async () => {
+    const [m] = (await mockRequest<{ messages: Message[] }>("GET", "/admin/messages")).messages;
+    wrap(<ApprovalPanel message={m} />);
+    await userEvent.type(await screen.findByLabelText("초안에 대한 피드백"), "인사를 바꿔 줘");
+    await userEvent.click(screen.getByRole("checkbox"));
+    await userEvent.click(screen.getByRole("button", { name: "다시 쓰기" }));
+    await screen.findByText("인사를 바꿔 줘");
+    const { lessons } = await mockRequest<{ lessons: unknown[] }>("GET", "/admin/lessons?status=active");
+    expect(lessons).toHaveLength(0);
+  });
+
+  it("반영한 지침을 초안 아래에 보여 준다", async () => {
+    const [m] = (await mockRequest<{ messages: Message[] }>("GET", "/admin/messages")).messages;
+    wrap(<ApprovalPanel message={{ ...m, applied_lessons: [{ id: "k1", text: "본문은 5문장 이내로 쓴다" }] }} />);
+    expect(await screen.findByText(/작성 지침 1개를 반영한 초안/)).toBeTruthy();
+    expect(screen.getByText("본문은 5문장 이내로 쓴다")).toBeTruthy();
+  });
+
+  it("수정 승인하면 배운 지침 수를 알려 준다", async () => {
+    const [m] = (await mockRequest<{ messages: Message[] }>("GET", "/admin/messages")).messages;
+    wrap(<ApprovalPanel message={m} onDecided={() => {}} />);
+    await userEvent.click(screen.getByRole("button", { name: "수정" }));
+    await userEvent.type(screen.getByLabelText("메일 본문 수정"), " 추가 문장");
+    await userEvent.click(screen.getByRole("button", { name: /수정본으로 승인/ }));
+    expect(await screen.findByText(/작성 지침 1개를 배웠습니다/)).toBeTruthy();
+  });
+});
+
 describe("전화 패널", () => {
   it("결과를 고르면 다음에 일어날 일을 알려 주고 기록한다", async () => {
     const [c] = (await mockRequest<{ calls: CallTask[] }>("GET", "/admin/calls")).calls;

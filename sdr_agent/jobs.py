@@ -32,6 +32,7 @@ from .outbox import Sender, get_sender
 from .toolkit.dart import DartClient
 from .toolkit.news import GoogleNewsClient, NaverNewsClient
 from .workflows.draft import compose_body, run_draft
+from .workflows.feedback import run_extract_lessons
 from .workflows.call_script import render_text as render_call_script
 from .workflows.call_script import run_call_script, sent_phrase
 from .workflows.handoff import render_text, run_handoff
@@ -166,7 +167,7 @@ def draft_emails(
                 continue
             log = new_log()
             result = run_draft(lead, repo.list_facts(lead_id), repo.latest_score(lead_id), llm, log,
-                               booking_url=s.booking_url, trigger=trigger)
+                               booking_url=s.booking_url, trigger=trigger, lessons=active_lessons(repo))
             if not result["draft"]:
                 out.append({"lead_id": lead_id, "status": "no_draft", "run_id": result["run_id"],
                             "stop_reason": result["stop_reason"]})
@@ -228,7 +229,12 @@ def decide_message(
     if decision == "rejected":
         repo.update_message(message_id, {"status": "rejected"})
         repo.set_status(msg["lead_id"], "needs_human")
-        return {"message_id": message_id, "status": "rejected"}
+        out = {"message_id": message_id, "status": "rejected"}
+        reason_text = _reason_text(reason_code, _human_note(note))
+        if reason_text:
+            out["lessons"] = _learn(channel, msg, "reject", decided_by, reason=reason_text,
+                                    settings=s, repo=repo, llm=llm, new_log=new_log)
+        return out
 
     fields: dict[str, Any] = {"status": "approved"}
     if decision == "edited":
@@ -236,6 +242,9 @@ def decide_message(
         fields["body"] = apply_footer(edited_body, s, msg["lead_id"])
     repo.update_message(message_id, fields)
     out = send_message(message_id, repo=repo, sender=sender, settings=s)
+    if decision == "edited":
+        out["lessons"] = _learn(channel, msg, "edit", decided_by, after=edited_body, feedback=_human_note(note),
+                                settings=s, repo=repo, llm=llm, new_log=new_log)
     if out["status"] == "sent" and msg["kind"] == "initial":
         try:
             out["call_task"] = create_call_task(message_id, settings=s, repo=repo, llm=llm, new_log=new_log)
@@ -629,3 +638,152 @@ def remind_pending(*, hours: int | None = None, settings: Settings | None = None
         notify("reminder", f"승인 대기 {len(stale)}건 (가장 오래된 것 {oldest}시간)", "\n".join(lines),
                settings=s, client=client)
     return {"pending_over_limit": len(stale)}
+
+
+# --- 피드백에서 배우기 (workflows/feedback.py) ---
+# 담당자의 수정 승인·반려·대화형 피드백에서 작성 지침을 뽑아 저장하고, 다음 초안을 쓸 때 함께 준다.
+# 지침은 사람의 판단에서만 나온다. 잘못된 지침은 POST /admin/lessons/{id}/status 로 끈다.
+
+MAX_ACTIVE_LESSONS = 10  # 초안에 넣는 지침 수 (최근 것부터)
+
+
+def active_lessons(repo: Any, limit: int = MAX_ACTIVE_LESSONS) -> list[dict]:
+    try:
+        return [{"id": l["id"], "text": l["text"]} for l in repo.list_lessons(status="active", limit=limit)]
+    except Exception:  # 지침을 못 읽어도 초안은 써야 한다
+        logger.exception("지침을 불러오지 못했습니다")
+        return []
+
+
+SYSTEM_NOTES = {"Slack에서 결정"}  # 사람이 쓴 피드백이 아닌 기본 메모
+
+
+def _human_note(note: str | None) -> str | None:
+    note = (note or "").strip()
+    return None if not note or note in SYSTEM_NOTES else note
+
+
+def _learn(channel: str, msg: dict, source: str, by: str, **kw: Any) -> dict[str, Any]:
+    """Slack은 3초 안에 응답해야 하므로 지침 추출을 뒤에서 돌린다. 관리 화면은 바로 돌려 결과를 보여 준다."""
+    if channel != "slack":
+        return learn_from_feedback(msg, source, by, **kw)
+    import threading
+
+    threading.Thread(target=learn_from_feedback, args=(msg, source, by), kwargs=kw, daemon=True).start()
+    return {"status": "queued"}
+
+
+def _reason_text(reason_code: str | None, note: str | None) -> str | None:
+    parts = [REASON_CODES.get(reason_code or "", ""), (note or "").strip()]
+    return ": ".join(p for p in parts if p) or None
+
+
+def learn_from_feedback(
+    msg: dict,
+    source: str,
+    by: str,
+    *,
+    after: str | None = None,
+    feedback: str | None = None,
+    reason: str | None = None,
+    provider: str | None = None,
+    settings: Settings | None = None,
+    repo: Any = None,
+    llm: LLM | None = None,
+    new_log: NewLog | None = None,
+) -> dict[str, Any]:
+    """수정·반려·대화형 피드백 하나에서 지침을 뽑아 저장한다. 실패해도 예외를 던지지 않는다 (승인을 막지 않게)."""
+    s = settings or load_settings()
+    try:
+        repo, new_log = _wire(s, repo, new_log)
+        if source == "reject" and reason and reason.startswith(REASON_CODES["wrong_target"]) and ":" not in reason:
+            return {"status": "skipped", "reason": "대상 문제는 작성 지침이 아님"}
+        if llm is None:
+            try:
+                llm = get_llm(provider, s)
+            except RuntimeError:
+                return {"status": "skipped", "reason": "LLM 키 없음"}
+        lead = repo.get_lead(msg["lead_id"])
+        existing = [l["text"] for l in repo.list_lessons(status="active", limit=50)]
+        log = new_log()
+        result = run_extract_lessons(
+            source, llm, log, before=msg.get("body"), after=after, feedback=feedback, reason=reason,
+            existing=existing, banned_terms=[lead.get("company_name"), lead.get("name")], lead_id=lead.get("id"))
+        evidence = (feedback or reason or "")[:500] or None
+        saved = repo.insert_lessons([
+            {"text": l["text"], "scope": "draft", "source": source, "evidence": evidence, "message_id": msg["id"],
+             "lead_id": msg["lead_id"], "run_id": result["run_id"], "created_by": by}
+            for l in result["lessons"]])
+        if saved:
+            notify("learning", f"작성 지침 {len(saved)}개를 배웠습니다 ({lead.get('company_name')})",
+                   "\n".join(f"- {l['text']}" for l in saved), lead_id=lead.get("id"))
+        return {"status": "ok", "run_id": result["run_id"], "saved": [{"id": l["id"], "text": l["text"]} for l in saved],
+                "dropped": result.get("dropped", [])}
+    except Exception as exc:
+        logger.exception("지침 추출 실패: %s", msg.get("id"))
+        return {"status": "failed", "error": f"{type(exc).__name__}: {exc}"}
+
+
+def revise_message(
+    message_id: str,
+    feedback: str,
+    requested_by: str,
+    *,
+    save_as_lesson: bool = False,
+    provider: str | None = None,
+    settings: Settings | None = None,
+    repo: Any = None,
+    llm: LLM | None = None,
+    new_log: NewLog | None = None,
+) -> dict[str, Any]:
+    """대화형 피드백: 승인 전 초안을 담당자 말대로 다시 쓴다. 발송하지 않는다 (여전히 승인 대기).
+    save_as_lesson이면 이 피드백에서 지침도 뽑아 다음 초안부터 반영한다."""
+    from .workflows.feedback import _strip_footer
+
+    feedback = (feedback or "").strip()
+    if not feedback:
+        raise ValueError("피드백을 입력해 주세요")
+    if len(feedback) > 2000:
+        raise ValueError("피드백은 2,000자 이내로 입력해 주세요")
+    s = settings or load_settings()
+    repo, new_log = _wire(s, repo, new_log)
+    msg = repo.get_message(message_id)
+    if msg["status"] != "pending_approval":
+        raise ValueError(f"승인 대기 중인 메일만 다시 쓸 수 있습니다 (status={msg['status']})")
+    if msg["kind"] != "initial":
+        raise ValueError("대화형 다시 쓰기는 첫 메일 초안에만 쓸 수 있습니다. 답변 메일은 직접 수정해 주세요")
+    lead = repo.get_lead(msg["lead_id"])
+    if lead.get("unsubscribed_at"):
+        raise ValueError("수신 거부한 리드입니다")
+    llm = llm or get_llm(provider, s)
+    log = new_log()
+    result = run_draft(lead, repo.list_facts(lead["id"]), repo.latest_score(lead["id"]), llm, log,
+                       booking_url=s.booking_url, trigger="feedback", lessons=active_lessons(repo),
+                       revision={"subject": msg["subject"], "body": _strip_footer(msg["body"]), "feedback": feedback})
+    if not result["draft"]:
+        return {"message_id": message_id, "status": "no_draft", "run_id": result["run_id"],
+                "stop_reason": result["stop_reason"]}
+    subject, body = finalize(result["draft"]["subject"], result["draft"]["body"], s, lead["id"])
+    updated = repo.update_message(message_id, {"subject": subject, "body": body,
+                                               "citations": result["draft"]["citations"],
+                                               "applied_lessons": result["draft"]["applied_lessons"]})
+    revision = repo.insert_revision({"message_id": message_id, "run_id": result["run_id"], "feedback": feedback,
+                                     "before_subject": msg["subject"], "before_body": msg["body"],
+                                     "after_subject": subject, "after_body": body, "requested_by": requested_by})
+    out: dict[str, Any] = {"message_id": message_id, "status": "revised", "run_id": result["run_id"],
+                           "revision_id": revision["id"], "message": updated}
+    if save_as_lesson:
+        out["lessons"] = learn_from_feedback(msg, "chat", requested_by, after=body, feedback=feedback,
+                                             settings=s, repo=repo, llm=llm, new_log=new_log)
+    notify("approval", f"다시 쓴 초안 승인 요청: {lead.get('company_name')} ({message_id})",
+           f"피드백: {feedback}\n\n제목: {subject}\n\n{body}", message_id=message_id, lead_id=lead["id"],
+           data=_approval_data(lead, updated, repo.latest_score(lead["id"])))
+    return out
+
+
+def set_lesson_status(lesson_id: str, status: str, *, settings: Settings | None = None, repo: Any = None) -> dict:
+    if status not in ("active", "disabled"):
+        raise ValueError("status는 active 또는 disabled입니다")
+    s = settings or load_settings()
+    repo, _ = _wire(s, repo, None)
+    return repo.update_lesson(lesson_id, {"status": status})

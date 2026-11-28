@@ -7,6 +7,7 @@ import { MESSAGE_STATUS, REASON_CODES } from "../lib/labels";
 import { useToast } from "../toast";
 import type { Message } from "../types";
 import { Evidence, ScoreBreakdown } from "./Evidence";
+import { AppliedLessons, FeedbackBox } from "./FeedbackBox";
 import { AiMark, Badge, ErrorBox, Loading, Score } from "./ui";
 
 interface Props {
@@ -37,14 +38,16 @@ export function ApprovalPanel({ message, onDecided, shortcuts = false }: Props) 
   const seconds = () => Math.round((Date.now() - shownAt.current) / 1000);
 
   const decide = useAction(async (decision: "approved" | "edited" | "rejected") => {
-    await api.decide(message.id, {
+    const res = await api.decide(message.id, {
       decision,
       edited_body: decision === "edited" ? body : undefined,
       note: [decision === "rejected" ? REASON_CODES.find((r) => r.value === reason)?.label : null, note.trim() || null].filter(Boolean).join(": ") || undefined,
       reason_code: decision === "rejected" ? reason || undefined : undefined,
       review_seconds: seconds(),
     });
-    toast(decision === "rejected" ? "반려했습니다. 담당자 확인 목록으로 옮겼습니다." : "승인했습니다. 샌드박스로 발송했고 1시간 뒤 전화 과제가 생깁니다.");
+    const learned = res.lessons?.saved?.length ?? 0;
+    toast((decision === "rejected" ? "반려했습니다. 담당자 확인 목록으로 옮겼습니다." : "승인했습니다. 샌드박스로 발송했고 1시간 뒤 전화 과제가 생깁니다.")
+      + (learned ? ` 이번 ${decision === "rejected" ? "반려" : "수정"}에서 작성 지침 ${learned}개를 배웠습니다.` : ""));
     invalidate();
     onDecided?.(decision);
   });
@@ -104,7 +107,9 @@ export function ApprovalPanel({ message, onDecided, shortcuts = false }: Props) 
               <div className="mail-body">{body}</div>
             )}
           </div>
-          {changed && <p className="notice warn">본문을 고쳤습니다. 승인하면 수정본이 발송되고 원문과 함께 기록됩니다.</p>}
+          {changed && <p className="notice warn">본문을 고쳤습니다. 승인하면 수정본이 발송되고 원문과 함께 기록됩니다. 고친 방식은 작성 지침으로 배워 다음 초안에 반영합니다.</p>}
+          <AppliedLessons lessons={message.applied_lessons} />
+          {pending && <FeedbackBox message={message} disabled={editing || decide.busy} />}
         </div>
 
         <aside className="approval-side">
@@ -141,7 +146,7 @@ export function ApprovalPanel({ message, onDecided, shortcuts = false }: Props) 
                   {REASON_CODES.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
                 </select>
               </label>
-              <label>메모 <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="무엇을 고치면 좋을까요" /></label>
+              <label>메모 <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="무엇을 고치면 좋을까요 (다음 초안부터 반영)" /></label>
               <button className="btn danger" disabled={decide.busy || !reason} onClick={() => decide.run("rejected")}>반려 확정</button>
               <button className="btn ghost" onClick={() => setRejecting(false)}>취소</button>
             </div>

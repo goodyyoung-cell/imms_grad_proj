@@ -1,6 +1,6 @@
 import type {
-  Approval, CallOutcomeInput, CallTask, DecisionInput, ImportResult, KbDoc, Lead, LeadDetail, LeadList, Message, ReplyRow, Run,
-  RunDetail, Summary, SystemStatus,
+  Approval, CallOutcomeInput, CallTask, DecisionInput, ImportResult, KbDoc, Lead, LeadDetail, LeadList, LearnResult, Lesson, Message,
+  ReplyRow, ReviseResult, Revision, Run, RunDetail, Summary, SystemStatus,
 } from "../types";
 import { ApiError } from "./errors";
 import { mockRequest } from "./mock";
@@ -81,7 +81,16 @@ export const api = {
   run: (id: string) => request<RunDetail>("GET", `/admin/runs/${id}`),
 
   decide: (id: string, d: DecisionInput) =>
-    request<Record<string, unknown>>("POST", `/admin/messages/${id}/decision`, d),
+    request<{ status: string; lessons?: LearnResult } & Record<string, unknown>>("POST", `/admin/messages/${id}/decision`, d),
+  // 피드백에서 배우기. revise는 LLM을 한 번 부른다 (발송하지 않음)
+  revise: (id: string, feedback: string, saveAsLesson: boolean) =>
+    request<ReviseResult>("POST", `/admin/messages/${id}/revise`, { feedback, save_as_lesson: saveAsLesson }),
+  revisions: (id: string) =>
+    request<{ revisions: Revision[] }>("GET", `/admin/messages/${id}/revisions`).then((r) => r.revisions),
+  lessons: (status: "active" | "disabled" | "" = "active") =>
+    request<{ lessons: Lesson[] }>("GET", "/admin/lessons" + qs({ status })).then((r) => r.lessons),
+  lessonStatus: (id: string, status: "active" | "disabled") =>
+    request<Lesson>("POST", `/admin/lessons/${id}/status`, { status }),
   callOutcome: (id: string, o: CallOutcomeInput) =>
     request<Record<string, unknown>>("POST", `/admin/calls/${id}/outcome`, o),
   confirmUnsubscribe: (leadId: string, note?: string) =>

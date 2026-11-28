@@ -39,7 +39,11 @@ export const WORKFLOW: Record<Workflow, string> = {
   reply_triage: "답장 분류",
   call_script: "콜 스크립트",
   handoff: "인계 요약",
+  draft_revise: "초안 다시 쓰기",
+  learn_feedback: "피드백 학습",
 };
+
+export const LESSON_SOURCE: Record<string, string> = { edit: "수정 승인", reject: "반려", chat: "대화형 피드백" };
 
 export const SOURCE: Record<string, string> = {
   demo_request: "데모 요청",

@@ -556,6 +556,54 @@ def admin_decide(message_id: str, d: Decision, p: admin_auth.Principal = Depends
         raise HTTPException(400, str(exc))
 
 
+# --- 피드백에서 배우기 ---
+
+class Revise(BaseModel):
+    feedback: str                 # 예: "좀 더 짧게, 회사 소식으로 시작해 줘"
+    save_as_lesson: bool = False  # 이 피드백을 다음 초안부터 쓸 작성 지침으로도 저장
+    requested_by: str | None = None
+
+
+@app.post("/admin/messages/{message_id}/revise")
+def admin_revise(message_id: str, r: Revise, p: admin_auth.Principal = Depends(principal)) -> dict:
+    """대화형 피드백: 승인 전 첫 메일 초안을 담당자 말대로 다시 쓴다 (발송하지 않음, LLM 비용 발생).
+    응답의 message가 다시 쓴 초안이다. save_as_lesson이면 lessons에 저장된 지침이 온다."""
+    try:
+        return jobs.revise_message(message_id, r.feedback, who(r.requested_by, p), save_as_lesson=r.save_as_lesson)
+    except LookupError as exc:
+        raise HTTPException(404, str(exc))
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+
+
+@app.get("/admin/messages/{message_id}/revisions", dependencies=auth)
+def admin_revisions(message_id: str, repo: Repo = Depends(get_repo)) -> dict:
+    """대화형 피드백으로 다시 쓴 기록 (오래된 순): 피드백, 이전·이후 제목과 본문."""
+    return {"revisions": repo.list_revisions(message_id)}
+
+
+@app.get("/admin/lessons", dependencies=auth)
+def admin_lessons(status: str | None = "active", limit: int = 50, repo: Repo = Depends(get_repo)) -> dict:
+    """담당자 피드백에서 배운 작성 지침 (최근 순). status=active(기본)·disabled, 비우면 전체.
+    source: edit(수정 승인) | reject(반려) | chat(대화형 피드백)"""
+    return {"lessons": repo.list_lessons(status=status or None, limit=min(limit, 200))}
+
+
+class LessonStatus(BaseModel):
+    status: str  # active | disabled
+
+
+@app.post("/admin/lessons/{lesson_id}/status", dependencies=auth)
+def admin_lesson_status(lesson_id: str, b: LessonStatus) -> dict:
+    """잘못 배운 지침을 끄거나 다시 켠다. 꺼진 지침은 다음 초안부터 쓰지 않는다."""
+    try:
+        return jobs.set_lesson_status(lesson_id, b.status)
+    except LookupError as exc:
+        raise HTTPException(404, str(exc))
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+
+
 class UnsubscribeConfirm(BaseModel):
     decided_by: str | None = None
     note: str | None = None

@@ -90,10 +90,35 @@ class Repo:
     # --- 메시지·승인 ---
 
     def insert_message(self, lead_id: str, run_id: str | None, kind: str, draft: dict) -> dict:
-        return self.c.table("messages").insert({
-            "lead_id": lead_id, "run_id": run_id, "kind": kind,
-            "subject": draft["subject"], "body": draft["body"], "citations": draft.get("citations", []),
-        }).execute().data[0]
+        row = {"lead_id": lead_id, "run_id": run_id, "kind": kind,
+               "subject": draft["subject"], "body": draft["body"], "citations": draft.get("citations", [])}
+        if draft.get("applied_lessons"):
+            row["applied_lessons"] = draft["applied_lessons"]
+        return self.c.table("messages").insert(row).execute().data[0]
+
+    # --- 피드백에서 배우기 ---
+
+    def list_lessons(self, status: str | None = "active", scope: str = "draft", limit: int = 50) -> list[dict]:
+        q = self.c.table("feedback_lessons").select("*").eq("scope", scope)
+        if status:
+            q = q.eq("status", status)
+        return q.order("created_at", desc=True).limit(limit).execute().data
+
+    def insert_lessons(self, rows: list[dict]) -> list[dict]:
+        return self.c.table("feedback_lessons").insert(rows).execute().data if rows else []
+
+    def update_lesson(self, lesson_id: str, fields: dict) -> dict:
+        rows = self.c.table("feedback_lessons").update(fields).eq("id", lesson_id).execute().data
+        if not rows:
+            raise LookupError(f"지침 없음: {lesson_id}")
+        return rows[0]
+
+    def insert_revision(self, row: dict) -> dict:
+        return self.c.table("message_revisions").insert(row).execute().data[0]
+
+    def list_revisions(self, message_id: str) -> list[dict]:
+        return (self.c.table("message_revisions").select("*").eq("message_id", message_id)
+                .order("created_at").execute().data)
 
     def get_message(self, message_id: str) -> dict:
         rows = self.c.table("messages").select("*").eq("id", message_id).limit(1).execute().data

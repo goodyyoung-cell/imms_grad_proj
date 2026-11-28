@@ -80,6 +80,12 @@ POST /auth/login
 | `POST /admin/calls/{id}/outcome` | `{"outcome", "email_received"?, "meeting_preference"?, "compelling_reason"?, "notes"?}` | outcome: `interested`(→인계) `not_now` `needs_info` `no_answer` `voicemail` `wrong_contact` `unsubscribe`(→연락 중단) |
 | `POST /admin/leads/{id}/unsubscribe` | `{"note"?}` | 담당자가 수신 거부 확정. 남은 메일·전화 자동 취소 |
 | `POST /admin/leads/import` | multipart: `file`(CSV·xlsx) 또는 `google_sheet`, `dry_run`(기본 true) | 미리보기 → 확인 후 `dry_run=false`로 다시 |
+| `POST /admin/messages/{id}/revise` | `{"feedback": "더 짧게 써 줘", "save_as_lesson"?: true}` | 대화형 피드백으로 승인 전 첫 메일을 다시 씀 (발송 안 함, LLM 비용). `message`에 새 초안, `lessons.saved`에 저장된 지침 |
+| `GET /admin/messages/{id}/revisions` | | 다시 쓴 기록 (피드백, 이전·이후 본문) |
+| `GET /admin/lessons?status=active` | | 피드백에서 배운 작성 지침 (`source`: edit 수정 승인 · reject 반려 · chat 대화형) |
+| `POST /admin/lessons/{id}/status` | `{"status": "active"\|"disabled"}` | 잘못 배운 지침을 끄거나 다시 켬 |
+
+승인(`decision`) 응답의 `lessons.saved`에는 이번 수정·반려에서 배운 지침이 온다. 메일의 `applied_lessons`는 그 초안을 쓸 때 반영한 지침이다.
 
 ### 시연용 동작 (LLM 비용이 든다 — 버튼에는 "실행" 확인을 둔다)
 

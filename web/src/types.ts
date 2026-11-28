@@ -5,7 +5,7 @@ export type LeadStatus =
   | "replied" | "needs_human" | "handed_off" | "unsubscribed";
 
 export type MessageStatus = "pending_approval" | "approved" | "sent" | "rejected" | "cancelled";
-export type Workflow = "research" | "draft" | "reply_triage" | "call_script" | "handoff";
+export type Workflow = "research" | "draft" | "reply_triage" | "call_script" | "handoff" | "draft_revise" | "learn_feedback";
 export type Outcome = "interested" | "not_now" | "needs_info" | "no_answer" | "voicemail" | "wrong_contact" | "unsubscribe";
 export type ReplyClass = "interested" | "question" | "not_now" | "not_decision_maker" | "out_of_office" | "unsubscribe" | "unclear";
 
@@ -48,6 +48,50 @@ export interface Message {
   created_at: string;
   sent_at: string | null;
   lead?: LeadBrief | null;
+  applied_lessons?: AppliedLesson[]; // 이 초안을 쓸 때 반영한 작성 지침
+}
+
+/** 담당자의 수정·반려·대화형 피드백에서 배운 작성 지침 */
+export interface AppliedLesson { id: string | null; text: string }
+
+export interface Lesson {
+  id: string;
+  text: string;
+  scope: "draft";
+  source: "edit" | "reject" | "chat";
+  evidence: string | null;
+  status: "active" | "disabled";
+  message_id: string | null;
+  lead_id: string | null;
+  created_by: string;
+  created_at: string;
+}
+
+/** 대화형 피드백으로 초안을 다시 쓴 기록 */
+export interface Revision {
+  id: string;
+  message_id: string;
+  feedback: string;
+  before_subject: string | null;
+  before_body: string | null;
+  after_subject: string | null;
+  after_body: string | null;
+  requested_by: string;
+  created_at: string;
+}
+
+export interface LearnResult {
+  status: "ok" | "skipped" | "failed" | "queued";
+  saved?: AppliedLesson[];
+  reason?: string;
+  error?: string;
+}
+
+export interface ReviseResult {
+  message_id: string;
+  status: "revised" | "no_draft";
+  message?: Message;
+  lessons?: LearnResult;
 }
 
 export interface Fact {

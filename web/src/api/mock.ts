@@ -3,7 +3,7 @@
 import type {
   Approval, KbDoc, ReplyRow, SystemStatus,
   CallOutcomeInput, CallTask, DecisionInput, Handoff, LeadDetail, LeadStatus, Message, Reply, ReplyClass,
-  Run, RunDetail, Summary,
+  LearnResult, Lesson, Revision, Run, RunDetail, Summary,
 } from "../types";
 import fixtures from "./fixtures.json";
 import { ApiError } from "./errors";
@@ -23,6 +23,20 @@ const nowIso = () => new Date().toISOString();
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 let approvals: Approval[] = [];
+let lessons: Lesson[] = [];
+let revisions: Revision[] = [];
+
+/** 모의 서버의 '피드백에서 배우기'. 실제 서버는 LLM이 일반화한 지침을 뽑는다. 여기서는 담당자 말을 다듬어 지침으로 둔다 */
+function learn(source: Lesson["source"], msg: Message, text: string | null | undefined, by: string): LearnResult {
+  const t = (text ?? "").replace(/\s+/g, " ").trim();
+  if (!t) return { status: "skipped", reason: "배울 내용이 없음" };
+  const lesson: Lesson = {
+    id: uid("lesson"), text: t.length > 80 ? t.slice(0, 80) + "…" : t, scope: "draft", source, evidence: t,
+    status: "active", message_id: msg.id, lead_id: msg.lead_id, created_by: by, created_at: nowIso(),
+  };
+  lessons.unshift(lesson);
+  return { status: "ok", saved: [{ id: lesson.id, text: lesson.text }] };
+}
 
 function seedApprovals() {
   const sent = Object.values(db.details).flatMap((d) => d.messages).filter((m) => m.status === "sent");
@@ -34,7 +48,7 @@ function seedApprovals() {
   }));
 }
 
-export function resetMock() { db = structuredClone(fixtures) as unknown as Fixtures; seq = 1000; seedApprovals(); }
+export function resetMock() { db = structuredClone(fixtures) as unknown as Fixtures; seq = 1000; seedApprovals(); lessons = []; revisions = []; }
 
 function kbFromRuns(): KbDoc[] {
   const docs = new Map<string, KbDoc>();
@@ -207,7 +221,8 @@ export async function mockRequest<T>(method: string, path: string, body?: unknow
     if (d.decision === "rejected") {
       record("rejected");
       msg.status = "rejected"; setStatus(msg.lead_id, "needs_human");
-      return out({ message_id: msg.id, status: "rejected" });
+      const learned = d.note ? learn("reject", msg, d.note, "시연") : undefined;
+      return out({ message_id: msg.id, status: "rejected", lessons: learned });
     }
     if (d.decision === "edited") {
       if (!d.edited_body?.trim()) throw new ApiError(400, "수정한 본문이 필요합니다");
@@ -218,7 +233,40 @@ export async function mockRequest<T>(method: string, path: string, body?: unknow
     const detail = detailOf(msg.lead_id);
     const call = msg.kind === "initial" ? makeCall(msg) : null;
     if (call) detail.calls.push(call);
-    return out({ message_id: msg.id, status: "sent", call_task_id: call?.id ?? null });
+    const learned = d.decision === "edited" ? learn("edit", msg, d.note || "담당자가 고친 방식대로 쓴다", "시연") : undefined;
+    return out({ message_id: msg.id, status: "sent", call_task_id: call?.id ?? null, lessons: learned });
+  }
+
+  const revise = p.match(/^\/admin\/messages\/([^/]+)\/revise$/);
+  if (method === "POST" && revise) {
+    const feedback = String(b.feedback ?? "").trim();
+    if (!feedback) throw new ApiError(400, "피드백을 입력해 주세요");
+    const msg = allMessages().find((m) => m.id === revise[1]);
+    if (!msg) throw new ApiError(404, "메일을 찾을 수 없습니다");
+    if (msg.status !== "pending_approval") throw new ApiError(400, "승인 대기 중인 메일만 다시 쓸 수 있습니다");
+    const cut = msg.body.indexOf("\n---");
+    const main = (cut >= 0 ? msg.body.slice(0, cut) : msg.body).split("\n").filter((l) => l.trim());
+    const footer = cut >= 0 ? msg.body.slice(cut) : "";
+    const after = [main[0], ...main.slice(1, 3), "20분 정도 통화 가능하실까요?"].filter(Boolean).join("\n") + footer;
+    revisions.push({ id: uid("rev"), message_id: msg.id, feedback, before_subject: msg.subject, before_body: msg.body,
+      after_subject: msg.subject, after_body: after, requested_by: "시연", created_at: nowIso() });
+    msg.body = after;
+    addRun(msg.lead_id, "draft_revise", `담당자 피드백("${feedback}")에 맞춰 초안을 다시 썼습니다.`);
+    const learned = b.save_as_lesson ? learn("chat", msg, feedback, "시연") : undefined;
+    return out({ message_id: msg.id, status: "revised", message: msg, lessons: learned });
+  }
+  const revs = p.match(/^\/admin\/messages\/([^/]+)\/revisions$/);
+  if (method === "GET" && revs) return out({ revisions: revisions.filter((r) => r.message_id === revs[1]) });
+  if (method === "GET" && p === "/admin/lessons") {
+    const st = q.get("status");
+    return out({ lessons: lessons.filter((l) => !st || l.status === st) });
+  }
+  const lessonSt = p.match(/^\/admin\/lessons\/([^/]+)\/status$/);
+  if (method === "POST" && lessonSt) {
+    const l = lessons.find((x) => x.id === lessonSt[1]);
+    if (!l) throw new ApiError(404, "지침을 찾을 수 없습니다");
+    l.status = b.status === "disabled" ? "disabled" : "active";
+    return out(l);
   }
 
   const outcome = p.match(/^\/admin\/calls\/([^/]+)\/outcome$/);

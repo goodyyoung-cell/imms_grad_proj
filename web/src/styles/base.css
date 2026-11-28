@@ -200,3 +200,17 @@ fieldset { border: 0; padding: 0; margin: 0; } legend { font-size: .85rem; font-
 .qs li button.on { background: var(--brand-soft); } .qs-right { margin-left: auto; display: inline-flex; gap: 8px; align-items: center; } .qs-none { padding: 8px 10px; }
 .nav-search { margin: 14px 10px 0; display: flex; justify-content: space-between; align-items: center; background: #1d2939; border: 1px solid #344054; color: #98a2b3; border-radius: 8px; padding: 7px 10px; font: inherit; font-size: .85rem; cursor: pointer; }
 .shell-a .nav-search kbd { border-color: #475467; }
+/* 피드백에서 배우기: 대화형 피드백·반영한 지침 */
+.feedback-box { margin-top: 14px; padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); }
+.feedback-box h4 { margin: 0 0 8px; }
+.feedback-box textarea { width: 100%; box-sizing: border-box; }
+.feedback-actions { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 8px; }
+.feedback-actions label { display: inline-flex; align-items: center; gap: 6px; }
+.feedback-thread { list-style: none; padding: 0; margin: 0 0 10px; display: grid; gap: 6px; }
+.bubble { padding: 7px 10px; border-radius: 10px; font-size: .88rem; max-width: 88%; word-break: keep-all; }
+.bubble .who { font-weight: 700; margin-right: 6px; font-size: .78rem; }
+.bubble.human { background: var(--amber-bg); justify-self: end; margin-left: auto; }
+.bubble.agent { background: var(--panel2); color: var(--muted); }
+.applied-lessons { margin-top: 10px; font-size: .86rem; color: var(--muted); }
+.applied-lessons summary { cursor: pointer; }
+.applied-lessons ul { margin: 6px 0 0; padding-left: 18px; color: var(--text); }

@@ -37,8 +37,10 @@ class Scripted:
 
     def __init__(self, *responses):
         self.responses = list(responses)
+        self.goals: list[str] = []
 
     def chat(self, system, messages, tools, max_tokens=2048):
+        self.goals.append(messages[0].text if messages else "")
         if not self.responses:
             raise RuntimeError("각본이 끝났는데 LLM이 또 불렸습니다")
         return self.responses.pop(0)
@@ -71,6 +73,9 @@ def check(ok: bool, label: str, detail: object = "") -> None:
     print(f"{'PASS' if ok else 'FAIL'}  {label}" + (f"  ({detail})" if detail not in ("", None) and not ok else ""))
 
 
+SMOKE_BY = "스모크 점검"
+
+
 def cleanup(client, run_ids: list[str]) -> None:
     """점검 리드(@smoke- 이메일)와 실행 기록을 지운다. 이전 실행이 남긴 것도 함께.
     병합된 리드가 대표 리드를 참조하므로 병합 리드부터 지운다. 평가용 샘플 리드는 건드리지 않는다."""
@@ -83,8 +88,11 @@ def cleanup(client, run_ids: list[str]) -> None:
         if merged:
             client.table("leads").delete().in_("id", merged).execute()
         client.table("leads").delete().in_("id", [i for i in ids if i not in merged]).execute()
+    lessons = client.table("feedback_lessons").delete().eq("created_by", SMOKE_BY).execute().data
     if run_ids:
         client.table("agent_runs").delete().in_("id", run_ids).execute()
+    if lessons:
+        print(f"정리: 점검 지침 {len(lessons)}건 삭제")
     left = client.table("leads").select("id", count="exact").like("email", "%@smoke-%").execute().count
     print(f"\n정리: 점검 리드 {len(ids)}건, 실행 기록 {len(run_ids)}건 삭제 (남은 점검 리드 {left}건)")
 
@@ -179,7 +187,8 @@ def main() -> int:
         check(q.get("calls_noticed") == 1 and len(pend) == 1 and pend[0]["script"]["notices"][0]["kind"] == "reply",
               "A11b 답장이 와도 전화는 유지, 통화 전 확인 알림 추가", q.get("calls_noticed"))
         out = jobs.decide_message(q["message_id"], "edited", "스모크 점검", edited_body="(수정) 네, 가능합니다.",
-                                  repo=repo, sender=sender)
+                                  repo=repo, sender=sender, new_log=new_log,
+                                  llm=Scripted(LLMResponse("", [call("submit_lessons", lessons=[])])))  # 배울 것 없음
         edited = repo.get_message(q["message_id"])["body"]
         check(out["status"] == "sent" and edited.startswith("(수정) 네, 가능합니다.") and "수신 거부" in edited,
               "A12 수정 승인 → 수정본으로 발송, 고지·수신 거부 안내 유지", out)
@@ -255,6 +264,55 @@ def main() -> int:
             check(False, "C3 취소된 전화에는 결과를 기록할 수 없음")
         except ValueError:
             check(True, "C3 취소된 전화에는 결과를 기록할 수 없음")
+
+        # ---------- D: 피드백에서 배우기 ----------
+        r = jobs.intake_leads([{"company_name": f"점검회사D-{tag}", "email": f"d@smoke-d-{tag}.example",
+                                "source": "demo_request"}], channel="web_form", repo=repo)
+        dl = r["details"]["created"][0]["lead_id"]
+        lead_ids.append(dl)
+        repo.set_status(dl, "researched")
+        [d] = jobs.draft_emails([dl], repo=repo, new_log=new_log, llm=Scripted(LLMResponse("", [call(
+            "submit_draft", subject="데모 요청 감사합니다", body="데모 요청 감사합니다. 저희 제품은 여러 기능이 있습니다. 20분 통화 가능하실까요?")])))
+        lesson_text = f"첫 메일 본문은 세 문장 이내로 쓴다 {tag[:4]}"
+        llm = Scripted(
+            LLMResponse("", [call("submit_draft", subject="데모 요청 감사합니다", body="데모 요청 감사합니다. 20분 통화 가능하실까요?")]),
+            LLMResponse("", [call("submit_lessons", lessons=[{"text": lesson_text, "why": "더 짧게 요청"}])]),
+        )
+        rv = jobs.revise_message(d["message_id"], "더 짧게 써 줘. 앞으로도 짧게", SMOKE_BY, save_as_lesson=True,
+                                 repo=repo, llm=llm, new_log=new_log)
+        m = repo.get_message(d["message_id"])
+        revs = repo.list_revisions(d["message_id"])
+        check(rv["status"] == "revised" and m["status"] == "pending_approval" and "여러 기능" not in m["body"]
+              and "수신 거부" in m["body"] and len(revs) == 1 and revs[0]["feedback"] == "더 짧게 써 줘. 앞으로도 짧게",
+              "D1 대화형 피드백 → 초안 다시 쓰기 (승인 대기 유지, 안내문 유지, 기록 저장)", rv.get("status"))
+        saved = (rv.get("lessons") or {}).get("saved") or []
+        lesson_id = saved[0]["id"] if saved else None
+        row = next((l for l in repo.list_lessons(status="active", limit=200) if l["id"] == lesson_id), None)
+        check(row is not None and row["source"] == "chat" and row["created_by"] == SMOKE_BY,
+              "D2 피드백을 작성 지침으로 저장 (source=chat, 활성)", rv.get("lessons"))
+
+        r = jobs.intake_leads([{"company_name": f"점검회사E-{tag}", "email": f"e@smoke-e-{tag}.example",
+                                "source": "web_inquiry"}], channel="web_form", repo=repo)
+        el = r["details"]["created"][0]["lead_id"]
+        lead_ids.append(el)
+        repo.set_status(el, "researched")
+        llm = Scripted(LLMResponse("", [call("submit_draft", subject="문의 감사합니다", body="문의 감사합니다. 20분 통화 가능하실까요?")]))
+        [e] = jobs.draft_emails([el], repo=repo, llm=llm, new_log=new_log)
+        em = repo.get_message(e["message_id"])
+        check(lesson_text in llm.goals[0] and any(x["id"] == lesson_id for x in em["applied_lessons"]),
+              "D3 다음 초안에 지침 반영, 메일에 적용한 지침 기록", em.get("applied_lessons"))
+
+        out = jobs.decide_message(e["message_id"], "edited", SMOKE_BY, edited_body="문의 감사합니다. 통화 가능하실까요?",
+                                  note="미팅 시간은 묻지 말고 통화 가능 여부만", repo=repo, sender=sender, new_log=new_log,
+                                  llm=Scripted(
+                                      LLMResponse("", [call("submit_lessons", lessons=[{"text": f"첫 메일은 통화 가능 여부만 묻는다 {tag[:4]}"}])]),
+                                      *call_script_llm().responses))
+        check((out.get("lessons") or {}).get("status") == "ok" and len(out["lessons"]["saved"]) == 1
+              and out["status"] == "sent", "D4 수정 승인에서 지침 추출·저장 (발송은 그대로)", out.get("lessons"))
+
+        jobs.set_lesson_status(lesson_id, "disabled", repo=repo)
+        check(lesson_text not in "\n".join(l["text"] for l in jobs.active_lessons(repo)),
+              "D5 지침을 끄면 다음 초안부터 빠짐")
     except Exception as exc:
         check(False, "예상치 못한 오류", f"{type(exc).__name__}: {exc}")
     finally:

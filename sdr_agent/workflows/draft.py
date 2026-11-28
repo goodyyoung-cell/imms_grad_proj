@@ -7,6 +7,11 @@
 - 회사에 관한 문장은 이번 리서치에서 저장된 사실(fact id)만 근거로 쓴다.
 - 제품·가격·정책 문장은 search_kb로 받은 자료 id만 근거로 쓴다. 가격을 말하면 가격 자료가 있어야 한다.
 - AI 사용 고지, 미팅 예약 링크, 수신 거부 안내는 LLM이 아니라 코드가 붙인다 (빠뜨릴 수 없게).
+
+피드백 반영 (workflows/feedback.py)
+- lessons: 담당자의 수정·반려·대화형 피드백에서 뽑은 작성 지침. 목표에 함께 넣어 따르게 한다.
+- revision: 승인 전에 담당자가 대화로 '이렇게 고쳐 줘'라고 한 경우. 이전 초안과 피드백을 주고 다시 쓰게 한다.
+- 지침이 근거 규칙과 충돌하면 근거 규칙이 이긴다 (근거 검사는 코드가 하므로 지침으로 우회할 수 없다).
 """
 
 from __future__ import annotations
@@ -27,6 +32,7 @@ SYSTEM = """당신은 한국 B2B SaaS 회사 노바웍스(제품: 노바데스�
 - 가격·할인은 첫 메일에 꼭 필요할 때만 쓰고, 쓰면 가격 자료를 근거로 답니다.
 - 6~10문장, 정중한 존댓말. 과장("업계 최고", "무조건")과 압박 표현을 쓰지 않습니다.
 - 마지막 문장은 짧은 화상 미팅(20분)을 제안합니다. 예약 링크·AI 고지·수신 거부 안내는 시스템이 붙이니 쓰지 마세요.
+- 담당자 작성 지침이 주어지면 따릅니다. 단 위 근거 규칙과 충돌하면 근거 규칙이 우선입니다.
 - 다 쓰면 submit_draft를 호출합니다. 쓴 근거를 fact_ids와 kb_ids에 모두 넣습니다."""
 
 FOOTER = (
@@ -45,14 +51,25 @@ def _fact_card(facts: list[dict]) -> list[dict]:
     return [{"fact_id": f["id"], "field": f["field"], "value": f["value"], "source_url": f["source_url"]} for f in facts]
 
 
-def build_goal(lead: dict[str, Any], facts: list[dict], score: dict | None) -> str:
+def build_goal(lead: dict[str, Any], facts: list[dict], score: dict | None,
+               lessons: list[dict] | None = None, revision: dict | None = None) -> str:
     card = {k: lead.get(k) for k in ("name", "company_name", "title", "source", "notes")}
-    return (
-        "다음 리드에게 보낼 첫 메일 초안을 쓰세요.\n"
-        f"리드: {json.dumps(card, ensure_ascii=False, default=str)}\n"
+    goal = (
+        ("다음 리드에게 보낼 첫 메일 초안을 담당자 피드백에 맞춰 다시 쓰세요.\n" if revision
+         else "다음 리드에게 보낼 첫 메일 초안을 쓰세요.\n")
+        + f"리드: {json.dumps(card, ensure_ascii=False, default=str)}\n"
         f"리서치 사실: {json.dumps(_fact_card(facts), ensure_ascii=False)}\n"
         f"선별 근거 태그: {json.dumps((score or {}).get('tags', []), ensure_ascii=False)}"
     )
+    if lessons:
+        goal += ("\n\n담당자 작성 지침 (지난 수정·반려·피드백에서 배운 것. 따르되 근거 규칙이 우선):\n"
+                 + "\n".join(f"- {l['text']}" for l in lessons))
+    if revision:
+        goal += (f"\n\n이전 초안 제목: {revision.get('subject', '')}\n이전 초안 본문:\n\"\"\"\n{revision.get('body', '')}\n\"\"\"\n"
+                 f"담당자 피드백: {revision['feedback']}\n"
+                 "피드백을 반영해 다시 쓰고, 피드백이 말하지 않은 부분은 이전 초안을 최대한 살리세요. "
+                 "이전 초안에 쓴 근거도 다시 인용해야 하면 search_kb로 다시 찾으세요.")
+    return goal
 
 
 def run_draft(
@@ -66,7 +83,10 @@ def run_draft(
     booking_url: str | None = None,
     trigger: str = "manual",
     max_steps: int = 6,
+    lessons: list[dict] | None = None,
+    revision: dict | None = None,
 ) -> dict[str, Any]:
+    """lessons: [{id, text}] 담당자 작성 지침. revision: {subject, body, feedback} 대화형 피드백으로 다시 쓰기."""
     kctx = knowledge or KnowledgeContext()
     fact_ids = {f["id"] for f in facts}
 
@@ -93,9 +113,11 @@ def run_draft(
              }, "required": ["subject", "body"]},
              submit_draft, terminal=True),
     ])
-    result = run_agent(llm, SYSTEM, build_goal(lead, facts, score), registry, log,
-                       workflow="draft", trigger=trigger, lead_id=lead.get("id"), max_steps=max_steps)
+    result = run_agent(llm, SYSTEM, build_goal(lead, facts, score, lessons, revision), registry, log,
+                       workflow="draft_revise" if revision else "draft", trigger=trigger,
+                       lead_id=lead.get("id"), max_steps=max_steps)
     draft = result.terminal_output
     if draft:
-        draft = {**draft, "body": compose_body(draft["body"], booking_url)}
+        draft = {**draft, "body": compose_body(draft["body"], booking_url),
+                 "applied_lessons": [{"id": l.get("id"), "text": l["text"]} for l in lessons or []]}
     return {"run_id": log.run_id, "status": result.status, "stop_reason": result.stop_reason, "draft": draft}
