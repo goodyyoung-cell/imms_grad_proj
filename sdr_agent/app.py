@@ -244,7 +244,7 @@ async def admin_import_leads(
 class BatchJob(BaseModel):
     lead_ids: list[str] | None = None
     limit: int = 10
-    provider: str | None = None  # "claude" | "gemini". 비우면 DEFAULT_LLM
+    provider: str | None = None  # "claude" | "gemini" | "openai". 비우면 DEFAULT_LLM
     trigger: str = "schedule"
 
 
@@ -506,7 +506,8 @@ def admin_status(repo: Repo = Depends(get_repo)) -> dict:
     s = load_settings()
     return {
         "mode": {"send": "sandbox", "llm_default": s.default_llm,
-                 "providers": {"claude": bool(s.anthropic_api_key), "gemini": bool(s.gemini_api_key)}},
+                 "providers": {"claude": bool(s.anthropic_api_key), "gemini": bool(s.gemini_api_key),
+                               "openai": bool(s.openai_api_key and s.openai_model)}},
         "slack": {"configured": bool(s.slack_bot_token and s.slack_channel),
                   "signing_configured": bool(s.slack_signing_secret), "channel": s.slack_channel,
                   "approvers": len(s.slack_approvers), "notify_kinds": list(s.slack_notify_kinds),
@@ -515,7 +516,8 @@ def admin_status(repo: Repo = Depends(get_repo)) -> dict:
                        "sent_today": repo.count_sent_today(), "sender_name": s.sender_name,
                        "sender_contact": s.sender_contact},
         "knowledge_docs": len({c.id.split("#", 1)[0] for c in default_kb().chunks}),
-        "chat": {"enabled": bool(s.anthropic_api_key or (s.gemini_api_key and s.gemini_model)),
+        "chat": {"enabled": bool(s.anthropic_api_key or (s.gemini_api_key and s.gemini_model)
+                                 or (s.openai_api_key and s.openai_model)),
                  "slack_events": bool(s.slack_bot_token and s.slack_signing_secret)},
         "memory": {"active_notes": _count_feedback(repo)},
     }

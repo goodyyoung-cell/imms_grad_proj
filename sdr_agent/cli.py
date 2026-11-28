@@ -16,7 +16,7 @@
   python -m sdr_agent.cli kb "가격 플랜"                         # 지식베이스 검색 확인 (DB·키 불필요)
   python -m sdr_agent.cli eval-replies                          # 모의 답장 분류 정확도 (DB 불필요, LLM 키 필요)
 
-공통 옵션: --provider claude|gemini
+공통 옵션: --provider claude|gemini|openai
 """
 
 from __future__ import annotations
@@ -91,7 +91,7 @@ def main() -> None:
         r = sub.add_parser(name, help=help_)
         r.add_argument("--lead-id", action="append", dest="lead_ids")
         r.add_argument("--limit", type=int, default=10)
-        r.add_argument("--provider", choices=["claude", "gemini"])
+        r.add_argument("--provider", choices=["claude", "gemini", "openai"])
 
     sub.add_parser("pending", help="승인 대기 메시지")
 
@@ -125,12 +125,12 @@ def main() -> None:
     g = rp.add_mutually_exclusive_group(required=True)
     g.add_argument("--from", dest="from_email")
     g.add_argument("--lead-id")
-    rp.add_argument("--provider", choices=["claude", "gemini"])
+    rp.add_argument("--provider", choices=["claude", "gemini", "openai"])
 
     h = sub.add_parser("handoff", help="인계 요약")
     h.add_argument("lead_id")
     h.add_argument("--reason", default="담당자 요청")
-    h.add_argument("--provider", choices=["claude", "gemini"])
+    h.add_argument("--provider", choices=["claude", "gemini", "openai"])
 
     im = sub.add_parser("import-leads", help="CSV·엑셀 파일 또는 구글 시트의 리드 올리기 (기본은 미리보기)")
     src = im.add_mutually_exclusive_group(required=True)
@@ -144,7 +144,7 @@ def main() -> None:
 
     e = sub.add_parser("eval-replies", help="정답이 달린 모의 답장으로 분류 정확도 측정 (DB 불필요)")
     e.add_argument("--file", type=Path, default=SAMPLE_REPLIES)
-    e.add_argument("--provider", choices=["claude", "gemini"])
+    e.add_argument("--provider", choices=["claude", "gemini", "openai"])
 
     args = p.parse_args()
 

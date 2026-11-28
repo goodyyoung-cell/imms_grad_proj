@@ -29,6 +29,8 @@ LLM_NAME = os.environ.get("EVAL_LLM", "claude")
 if LLM_NAME == "gemini":
     os.environ["GEMINI_API_KEY"] = secret("gemini-api-key")
     os.environ["GEMINI_MODEL"] = os.environ.get("GEMINI_MODEL", "gemini-3.8-flash")
+elif LLM_NAME == "openai":
+    assert os.environ.get("OPENAI_API_KEY") and os.environ.get("OPENAI_MODEL"), "OPENAI_API_KEY와 OPENAI_MODEL을 환경변수로 주세요"
 else:
     os.environ["ANTHROPIC_API_KEY"] = secret("anthropic-api-key")
     os.environ["ANTHROPIC_MODEL"] = "claude-sonnet-5-5"

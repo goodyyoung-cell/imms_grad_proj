@@ -1,4 +1,4 @@
-"""LLM 어댑터. get_llm("claude" | "gemini")으로 만든다."""
+"""LLM 어댑터. get_llm("claude" | "gemini" | "openai")으로 만든다."""
 
 from __future__ import annotations
 
@@ -23,4 +23,10 @@ def get_llm(provider: str | None = None, settings: Settings | None = None) -> LL
         from .gemini_llm import GeminiLLM
 
         return GeminiLLM(s.gemini_api_key, s.gemini_model)
+    if provider == "openai":
+        if not s.openai_api_key or not s.openai_model:
+            raise RuntimeError("OPENAI_API_KEY와 OPENAI_MODEL이 필요합니다")
+        from .openai_llm import OpenAILLM
+
+        return OpenAILLM(s.openai_api_key, s.openai_model, s.openai_base_url, s.openai_reasoning_effort)
     raise ValueError(f"알 수 없는 LLM: {provider}")

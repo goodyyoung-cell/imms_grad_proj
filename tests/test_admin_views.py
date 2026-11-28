@@ -129,7 +129,8 @@ def test_status_has_no_secrets(client, monkeypatch):
     r = client.get("/admin/status", headers=hdr(client))
     assert "SECRETVALUE" not in r.text and "job-secret" not in r.text and "team-pass" not in r.text
     d = r.json()
-    assert d["mode"] == {"send": "sandbox", "llm_default": "claude", "providers": {"claude": True, "gemini": True}}
+    assert d["mode"] == {"send": "sandbox", "llm_default": "claude",
+                         "providers": {"claude": True, "gemini": True, "openai": False}}
     assert d["slack"]["configured"] is True and d["slack"]["signing_configured"] is True
     assert d["slack"]["channel"] == "C123" and d["slack"]["approvers"] == 2
     assert d["slack"]["web_url"] == "https://admin.example" and "approval" in d["slack"]["notify_kinds"]
@@ -142,7 +143,7 @@ def test_status_unconfigured(client):
     d = client.get("/admin/status", headers=hdr(client)).json()
     assert d["slack"] == {"configured": False, "signing_configured": False, "channel": None, "approvers": 0,
                           "notify_kinds": d["slack"]["notify_kinds"], "web_url": None}
-    assert d["mode"]["providers"] == {"claude": False, "gemini": False}
+    assert d["mode"]["providers"] == {"claude": False, "gemini": False, "openai": False}
 
 
 def test_notify_test_without_slack_config(client):

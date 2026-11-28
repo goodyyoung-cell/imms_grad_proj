@@ -5,7 +5,8 @@ import pytest
 
 @pytest.fixture(autouse=True)
 def _no_real_keys(monkeypatch):
-    for name in ("ANTHROPIC_API_KEY", "GEMINI_API_KEY", "DART_API_KEY", "NAVER_CLIENT_ID", "NAVER_CLIENT_SECRET",
+    for name in ("ANTHROPIC_API_KEY", "GEMINI_API_KEY", "OPENAI_API_KEY", "OPENAI_MODEL", "OPENAI_BASE_URL",
+                 "OPENAI_REASONING_EFFORT", "DART_API_KEY", "NAVER_CLIENT_ID", "NAVER_CLIENT_SECRET",
                  "BOOKING_URL", "SLACK_BOT_TOKEN", "SLACK_SIGNING_SECRET", "SLACK_CHANNEL", "SLACK_APPROVERS",
                  "ADMIN_WEB_URL", "PUBLIC_BASE_URL"):
         monkeypatch.setenv(name, "")

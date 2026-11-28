@@ -36,6 +36,10 @@ class Settings:
     job_token: str | None
     agent_max_steps: int
     booking_url: str | None = None      # 메일 CTA의 미팅 예약 링크 (모듈 3 축소)
+    openai_api_key: str | None = None   # OpenAI(또는 호환 서비스) API 키. 구독(ChatGPT)이 아니라 API 결제가 필요하다
+    openai_model: str | None = None     # 쓸 모델 이름 (필수)
+    openai_base_url: str | None = None  # 비우면 https://api.openai.com/v1. Azure OpenAI 등 호환 서비스의 /v1 주소
+    openai_reasoning_effort: str | None = None  # low | medium | high (추론 모델에서 추론량을 줄여 응답을 빠르게)
     handoff_to: str | None = None       # 인계 자료를 받을 담당자 (이름 또는 주소)
     naver_client_id: str | None = None  # 네이버 검색 API (뉴스)
     naver_client_secret: str | None = None
@@ -84,6 +88,10 @@ def load_settings() -> Settings:
         call_delay_minutes=int(_get("CALL_DELAY_MINUTES", "60")),
         call_hours_kst=tuple(int(h) for h in _get("CALL_HOURS_KST", "9-18").split("-", 1)),
         booking_url=_get("BOOKING_URL"),
+        openai_api_key=_get("OPENAI_API_KEY"),
+        openai_model=_get("OPENAI_MODEL"),
+        openai_base_url=(_get("OPENAI_BASE_URL") or "").rstrip("/") or None,
+        openai_reasoning_effort=_get("OPENAI_REASONING_EFFORT"),
         handoff_to=_get("HANDOFF_TO"),
         slack_bot_token=_get("SLACK_BOT_TOKEN"),
         slack_signing_secret=_get("SLACK_SIGNING_SECRET"),
